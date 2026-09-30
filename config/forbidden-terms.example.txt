@@ -1,0 +1,10 @@
+# Termes interdits : copie ce fichier en config/forbidden-terms.txt (hors git) et remplace les exemples.
+#
+# Un terme par ligne. Les lignes vides et celles qui commencent par # sont ignorées.
+# La casse et les accents sont ignorés, et un terme est cherché partout, même collé à d'autres lettres :
+# « Acme » attrape aussi « AcmeAI », « acme.io » et « #Acme ».
+# Un terme de plusieurs mots tolère n'importe quel séparateur : « Jane Doe » attrape « jane-doe » et « JaneDoe ».
+# Au moins 3 lettres ou chiffres par terme. Évite les mots courants : ils bloqueraient des textes anodins.
+Jane Doe
+Acme
+Springfield

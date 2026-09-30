@@ -1,0 +1,25 @@
+{
+  "name": "copilote-x",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Prépare des brouillons de posts X à partir de l'actualité tech et les propose dans un bot Telegram privé. Ne publie jamais rien.",
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "check": "npm run typecheck && npm test",
+    "db:migrate": "node src/cli/migrate.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "24.19.0",
+    "typescript": "7.0.2"
+  }
+}

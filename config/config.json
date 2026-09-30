@@ -1,0 +1,62 @@
+{
+  "timezone": "Europe/Paris",
+  "slots": ["09:00", "13:00", "17:00", "21:00"],
+  "networks": {
+    "x": { "enabled": true },
+    "instagram": { "enabled": false },
+    "tiktok": { "enabled": false },
+    "youtube": { "enabled": false }
+  },
+  "mistral": {
+    "models": {
+      "draft": "mistral-medium-3-5",
+      "cluster": "mistral-small-2603",
+      "chat": "mistral-medium-3-5"
+    },
+    "webSearchTool": "web_search",
+    "dailyCapEur": 1,
+    "vatMultiplier": 1.2,
+    "countConnectorTokensAsInput": true,
+    "pricesEur": {
+      "models": {
+        "mistral-medium-3-5": { "inputPerMillion": 1.25, "outputPerMillion": 6.4 },
+        "mistral-small-2603": { "inputPerMillion": 0.12, "outputPerMillion": 0.5 }
+      },
+      "webSearchPerCall": 0.03,
+      "webSearchPremiumPerCall": 0.05
+    }
+  },
+  "x": {
+    "pollIntervalMinutes": 30,
+    "watchedAccounts": [],
+    "timelineExclude": ["retweets", "replies"],
+    "dailyCapUsd": 1.8,
+    "vatMultiplier": 1.2,
+    "pricesUsd": {
+      "postRead": 0.005,
+      "userRead": 0.01,
+      "ownedRead": 0.001
+    }
+  },
+  "sources": {
+    "rssFeeds": [],
+    "hackerNews": { "enabled": true }
+  },
+  "generation": {
+    "maxAttempts": 3,
+    "exclusionDays": 7,
+    "triggerMaxAgeHours": 24,
+    "tweetMaxWeightedLength": 280
+  },
+  "telegram": {
+    "copyButtonMaxChars": 256
+  },
+  "retention": {
+    "xTextHours": 24
+  },
+  "paths": {
+    "database": "data/copilote.sqlite",
+    "forbiddenTerms": "config/forbidden-terms.txt",
+    "voice": "voice.md"
+  }
+}
