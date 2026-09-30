@@ -4,7 +4,7 @@ Service local qui suit l'actualité tech (API officielle de X en lecture seule, 
 
 ## Prérequis
 
-- Node 24 LTS (voir `.nvmrc`). `npm install` refuse une autre version.
+- Node 24 LTS (voir `.node-version` et `.nvmrc`). `npm install` refuse une autre version.
 - Un fichier `.env` avec les variables listées dans `.env.example`.
 - `config/forbidden-terms.txt`, créé à partir de `config/forbidden-terms.example.txt`. Sans lui, rien n'est généré.
 
@@ -14,6 +14,7 @@ Service local qui suit l'actualité tech (API officielle de X en lecture seule, 
 - `npm run check` : vérifie les types puis lance les tests.
 - `npm test` : lance les tests seuls.
 - `npm run db:migrate` : crée ou met à jour la base SQLite dans `data/`.
+- `npm run telegram:chat-id` : affiche l'identifiant du chat qui écrit au bot, à reporter dans `TELEGRAM_ALLOWED_CHAT_ID`. Le bot ne répond rien.
 
 ## Configuration
 

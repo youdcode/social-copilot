@@ -6,8 +6,10 @@ export const SECRET_NAMES = [
   'TELEGRAM_BOT_TOKEN',
   'TELEGRAM_ALLOWED_CHAT_ID',
   'X_BEARER_TOKEN',
-  'X_CLIENT_ID',
-  'X_CLIENT_SECRET',
+  'X_API_KEY',
+  'X_API_SECRET',
+  'X_ACCESS_TOKEN',
+  'X_ACCESS_TOKEN_SECRET',
 ] as const;
 
 export type SecretName = (typeof SECRET_NAMES)[number];

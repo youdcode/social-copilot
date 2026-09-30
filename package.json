@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test \"test/**/*.test.ts\"",
     "check": "npm run typecheck && npm test",
-    "db:migrate": "node src/cli/migrate.ts"
+    "db:migrate": "node src/cli/migrate.ts",
+    "telegram:chat-id": "node --env-file=.env src/cli/telegram-chat-id.ts"
   },
   "dependencies": {
     "better-sqlite3": "13.0.3",
