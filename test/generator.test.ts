@@ -1,0 +1,190 @@
+import assert from 'node:assert/strict';
+import { describe, test } from 'node:test';
+import { generateDraft, type GeneratorDeps } from '../src/generation/generator.ts';
+import type { MistralGateway, SearchResult } from '../src/mistral/gateway.ts';
+import type { Notifier, ProposedDraft } from '../src/notifier.ts';
+import { spentToday } from '../src/spend.ts';
+import { testConfig, testDb, testFilter } from './helpers.ts';
+
+const now = new Date('2026-10-01T10:00:00Z');
+const slot = new Date('2026-10-01T07:00:00Z');
+const usage = { model: 'mistral-medium-3-5', promptTokens: 1000, completionTokens: 200, connectorTokens: 3000, webSearchCalls: 1 };
+
+function seed(db: GeneratorDeps['db']) {
+  db.prepare("INSERT INTO x_users (user_id, handle, resolved_at) VALUES ('100', 'lab', '2026-10-01T00:00:00Z')").run();
+  db.prepare(
+    `INSERT INTO x_posts (id, author_id, url, posted_at, fetched_at, text, public_metrics)
+     VALUES ('9001', '100', 'https://x.com/lab/status/9001', '2026-10-01T09:00:00.000Z', '2026-10-01T09:30:00.000Z',
+             'We just released Model 5.', '{"like_count":500,"repost_count":80}')`,
+  ).run();
+}
+
+const goodDraft = {
+  topic: 'Lab releases Model 5',
+  pillar: 'ai',
+  tweet: 'Lab released Model 5 today. Same quality, half the price.',
+  why_it_matters: 'Cheaper inference for small teams.',
+  sources: ['https://lab.test/model-5', 'https://x.com/lab/status/9001'],
+  asset_request: null,
+};
+
+function fakeGateway(drafts: unknown[]): MistralGateway & { searches: number } {
+  const gateway = {
+    searches: 0,
+    async completeJson() {
+      return {
+        text: JSON.stringify({ topics: [{ label: 'Lab releases Model 5', pillar: 'ai', item_refs: ['x:9001', 'x:404'] }] }),
+        usage: { ...usage, model: 'mistral-small-2603', connectorTokens: 0, webSearchCalls: 0 },
+      };
+    },
+    async searchAndAnswer(): Promise<SearchResult> {
+      const next = drafts[Math.min(gateway.searches, drafts.length - 1)];
+      gateway.searches++;
+      return {
+        text: JSON.stringify(next),
+        references: [{ url: 'https://lab.test/model-5', title: 'Model 5' }],
+        toolCalls: 1,
+        usage,
+      };
+    },
+  };
+  return gateway;
+}
+
+function deps(gateway: MistralGateway, change?: (c: any) => void) {
+  const proposed: ProposedDraft[] = [];
+  const alerts: string[] = [];
+  const notifier: Notifier = { draftProposed: (d) => void proposed.push(d), alert: (m) => void alerts.push(m) };
+  const db = testDb();
+  seed(db);
+  const d: GeneratorDeps = {
+    db,
+    config: testConfig(change),
+    gateway,
+    filter: testFilter,
+    voice: 'Test voice.',
+    notifier,
+    now: () => now,
+    log: () => {},
+  };
+  return { d, proposed, alerts };
+}
+
+describe('generateDraft', () => {
+  test('groups, ranks, writes, validates, stores and notifies', async () => {
+    const { d, proposed } = deps(fakeGateway([goodDraft]));
+    const outcome = await generateDraft(d, slot, { save: true });
+    assert.equal(outcome.status, 'drafted');
+    assert.equal(proposed.length, 1);
+    const row = d.db.prepare('SELECT status, trigger_ref, topic_items FROM drafts').get() as {
+      status: string;
+      trigger_ref: string;
+      topic_items: string;
+    };
+    assert.equal(row.status, 'proposed');
+    assert.equal(row.trigger_ref, '9001');
+    assert.deepEqual(JSON.parse(row.topic_items), ['x:9001']);
+    assert.ok(spentToday(d.db, d.config, 'mistral', now) > 0);
+  });
+
+  test('a dry run stores and sends nothing', async () => {
+    const { d, proposed } = deps(fakeGateway([goodDraft]));
+    const outcome = await generateDraft(d, slot, { save: false });
+    assert.equal(outcome.status, 'drafted');
+    assert.equal(proposed.length, 0);
+    assert.equal(d.db.prepare('SELECT count(*) FROM drafts').pluck().get(), 0);
+  });
+
+  test('retries with the reasons, then alerts after the last attempt', async () => {
+    const gateway = fakeGateway([{ ...goodDraft, sources: ['https://made-up.test'] }]);
+    const { d, alerts } = deps(gateway);
+    const outcome = await generateDraft(d, slot, { save: true });
+    assert.equal(outcome.status, 'failed');
+    assert.equal(gateway.searches, 3);
+    assert.equal(outcome.attempts.length, 3);
+    assert.equal(alerts.length, 1);
+  });
+
+  test('succeeds on a later attempt', async () => {
+    const gateway = fakeGateway([{ ...goodDraft, tweet: 'Too long '.repeat(40) }, goodDraft]);
+    const { d } = deps(gateway);
+    const outcome = await generateDraft(d, slot, { save: true });
+    assert.equal(outcome.status, 'drafted');
+    assert.equal(gateway.searches, 2);
+  });
+
+  test('skips the slot while a draft is pending', async () => {
+    const { d } = deps(fakeGateway([goodDraft]));
+    await generateDraft(d, slot, { save: true });
+    const outcome = await generateDraft(d, new Date('2026-10-01T11:00:00Z'), { save: true });
+    assert.equal(outcome.status, 'pending_draft');
+  });
+
+  test('never reuses items already drafted', async () => {
+    const { d } = deps(fakeGateway([goodDraft]));
+    await generateDraft(d, slot, { save: true });
+    d.db.prepare("UPDATE drafts SET status = 'posted'").run();
+    const outcome = await generateDraft(d, new Date('2026-10-01T11:00:00Z'), { save: true });
+    assert.equal(outcome.status, 'no_topic');
+  });
+
+  test('stops at the Mistral cap', async () => {
+    const { d } = deps(fakeGateway([goodDraft]), (c) => (c.mistral.dailyCapEur = 0.0001));
+    d.db.prepare("INSERT INTO spend (service, day, cost_incl_vat) VALUES ('mistral', '2026-10-01', 1)").run();
+    const outcome = await generateDraft(d, slot, { save: true });
+    assert.equal(outcome.status, 'budget');
+  });
+
+  test('falls back to two calls when Mistral refuses JSON output with web search', async () => {
+    let jsonCalls = 0;
+    const base = fakeGateway([goodDraft]);
+    const gateway: MistralGateway = {
+      searchAndAnswer: async (o) => {
+        if (o.jsonSchema) throw Object.assign(new Error('API error occurred: Status 400'), { statusCode: 400 });
+        return { ...(await base.searchAndAnswer(o)), text: 'Facts: Model 5 shipped.' };
+      },
+      completeJson: async (o) => {
+        jsonCalls++;
+        return jsonCalls === 1 ? base.completeJson(o) : { text: JSON.stringify(goodDraft), usage };
+      },
+    };
+    const { d } = deps(gateway);
+    const outcome = await generateDraft(d, slot, { save: false });
+    assert.equal(outcome.status, 'drafted');
+    assert.deepEqual(outcome.attempts.map((a) => a.mode), ['two_step']);
+  });
+
+  test('rejects an answer written without any web search, then switches to two calls', async () => {
+    const base = fakeGateway([goodDraft]);
+    const modes: string[] = [];
+    const gateway: MistralGateway = {
+      searchAndAnswer: async (o) => {
+        modes.push(o.jsonSchema ? 'single' : 'research');
+        const result = await base.searchAndAnswer(o);
+        return o.jsonSchema ? { ...result, toolCalls: 0 } : { ...result, text: 'Facts.' };
+      },
+      completeJson: async (o) => (o.jsonSchema.name === 'topics' ? base.completeJson(o) : { text: JSON.stringify(goodDraft), usage }),
+    };
+    const { d } = deps(gateway);
+    const outcome = await generateDraft(d, slot, { save: false });
+    assert.equal(outcome.status, 'drafted');
+    assert.deepEqual(modes, ['single', 'research']);
+    assert.match(outcome.attempts[0]!.errors[0]!, /did not run a web search/);
+  });
+
+  test('two-step mode researches first, then writes JSON without tools', async () => {
+    let jsonCalls = 0;
+    const base = fakeGateway([goodDraft]);
+    const gateway: MistralGateway = {
+      searchAndAnswer: async (o) => ({ ...(await base.searchAndAnswer(o)), text: 'Facts: Model 5 shipped.' }),
+      completeJson: async (o) => {
+        jsonCalls++;
+        return jsonCalls === 1 ? base.completeJson(o) : { text: JSON.stringify(goodDraft), usage };
+      },
+    };
+    const { d } = deps(gateway, (c) => (c.mistral.draftMode = 'two_step'));
+    const outcome = await generateDraft(d, slot, { save: false });
+    assert.equal(outcome.status, 'drafted');
+    assert.equal(jsonCalls, 2);
+  });
+});

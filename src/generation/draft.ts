@@ -1,0 +1,222 @@
+import twitterText from 'twitter-text';
+import { z } from 'zod';
+import type { ForbiddenTermsFilter } from '../filters/forbidden-terms.ts';
+import { normalizeForMatching } from '../filters/forbidden-terms.ts';
+import type { WebReference, JsonSchemaSpec } from '../mistral/gateway.ts';
+import { hoursBetween } from '../time.ts';
+import type { Candidate } from './candidates.ts';
+import type { RankedTopic } from './rank.ts';
+
+export const PILLARS = ['ai', 'startups', 'deeptech', 'devtools', 'motion'] as const;
+export type Pillar = (typeof PILLARS)[number];
+
+/** Bump when the prompt changes, so each stored draft says which prompt wrote it. */
+export const PROMPT_VERSION = '2026-10-01.1';
+
+export const draftSchema = z.strictObject({
+  topic: z.string().min(3).max(140),
+  pillar: z.enum(PILLARS),
+  tweet: z.string().min(1).max(1000),
+  why_it_matters: z.string().min(1).max(400),
+  sources: z.array(z.string().min(1)).min(1).max(8),
+  asset_request: z.union([
+    z.null(),
+    z.strictObject({
+      type: z.enum(['video', 'image', 'screenshot']),
+      brief: z.string().min(1).max(600),
+      duration_s: z.number().min(0).max(600),
+    }),
+  ]),
+});
+
+export type DraftJson = z.infer<typeof draftSchema>;
+
+/** Bounds that strict structured output may refuse. The code checks them after parsing, with zod. */
+const CONSTRAINT_KEYWORDS = new Set([
+  'minLength',
+  'maxLength',
+  'minItems',
+  'maxItems',
+  'minimum',
+  'maximum',
+  'exclusiveMinimum',
+  'exclusiveMaximum',
+  'pattern',
+  'format',
+]);
+
+function stripConstraints(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(stripConstraints);
+  if (node === null || typeof node !== 'object') return node;
+  return Object.fromEntries(
+    Object.entries(node)
+      .filter(([key]) => !CONSTRAINT_KEYWORDS.has(key) && key !== '$schema')
+      .map(([key, value]) => {
+        if (key === 'enum' || key === 'required') return [key, value];
+        if (key === 'properties') {
+          // Property names are data, not keywords: keep them all.
+          return [key, Object.fromEntries(Object.entries(value as object).map(([name, sub]) => [name, stripConstraints(sub)]))];
+        }
+        return [key, stripConstraints(value)];
+      }),
+  );
+}
+
+/**
+ * Converts a zod schema to the JSON Schema sent to Mistral: types, enums, required fields and no extra properties.
+ * Length and range bounds stay on our side, in zod.
+ */
+export function toJsonSchemaSpec(name: string, schema: z.ZodType): JsonSchemaSpec {
+  return { name, schema: stripConstraints(z.toJSONSchema(schema)) as Record<string, unknown> };
+}
+
+export const DRAFT_JSON_SCHEMA = toJsonSchemaSpec('tweet_draft', draftSchema);
+
+export function systemPrompt(voice: string, excludedTopics: readonly string[]): string {
+  return `You write tweets for an anonymous X account about tech: AI releases, new features and major updates, startups, deeptech, dev tools, motion design.
+
+Voice: ${voice.trim()}
+
+Rules:
+- One tweet, 280 characters max, native English. No hashtags unless essential. One emoji at most.
+- Say what shipped and why it matters, in one or two sentences. No hype words.
+- Use only facts from the trigger post provided and from your web search. Every claim must be backed by a source you return. Never invent numbers, quotes or dates.
+- In sources, list only URLs you actually opened in your web search, plus the trigger URL provided.
+- Never mention the account owner, their location, their company, or anything personal.
+- No em dashes.
+- If a short video or image would make the tweet much stronger, fill asset_request with a precise brief. Otherwise null.
+- Do not cover these topics, already posted or refused: ${excludedTopics.length > 0 ? excludedTopics.join('; ') : 'none'}
+
+Return only the JSON object, nothing else.`;
+}
+
+function describeItem(item: Candidate, now: Date): string {
+  const age = hoursBetween(item.publishedAt, now).toFixed(1);
+  return `- [${item.kind === 'x_post' ? 'X post' : item.kind === 'rss' ? 'RSS' : 'Hacker News'}] ${item.label}, ${age} h ago, ${item.url}\n  ${item.text.replace(/\s+/g, ' ').slice(0, 500)}`;
+}
+
+/** The user message for a draft: the topic, its trigger, and the other items grouped with it. */
+export function draftInput(topic: RankedTopic, now: Date, feedback: readonly string[] = []): string {
+  const others = topic.items.filter((i) => i.ref !== topic.trigger.ref).slice(0, 8);
+  const triggerUrl = topic.trigger.sourceUrl
+    ? `Trigger URL (may be cited as a source): ${topic.trigger.sourceUrl}`
+    : 'This trigger has no citable URL: cite only pages from your web search.';
+  return [
+    `Topic: ${topic.label}`,
+    `Pillar: ${topic.pillar}`,
+    '',
+    'Trigger:',
+    describeItem(topic.trigger, now),
+    triggerUrl,
+    ...(others.length > 0 ? ['', 'Related items:', ...others.map((i) => describeItem(i, now))] : []),
+    '',
+    'Verify the facts with a web search before writing, then return the JSON object.',
+    ...(feedback.length > 0
+      ? ['', 'Your previous answer was rejected for these reasons. Fix them:', ...feedback.map((f) => `- ${f}`)]
+      : []),
+  ].join('\n');
+}
+
+/** Lowercase host, no fragment, no tracking parameters, no trailing slash: two spellings of a page compare equal. */
+export function normalizeUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url.trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    parsed.hash = '';
+    for (const key of [...parsed.searchParams.keys()]) {
+      if (/^(utm_|ref$|ref_src$|fbclid$|gclid$)/i.test(key)) parsed.searchParams.delete(key);
+    }
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    const path = parsed.pathname.replace(/\/+$/, '');
+    return `${host}${path}${parsed.search}`;
+  } catch {
+    return null;
+  }
+}
+
+const STOPWORDS = new Set(['the', 'and', 'for', 'with', 'new', 'its', 'from', 'into', 'that', 'this', 'are', 'now']);
+
+function topicWords(topic: string): Set<string> {
+  return new Set(
+    normalizeForMatching(topic)
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((w) => (w.length >= 3 || /\d/.test(w)) && !STOPWORDS.has(w)),
+  );
+}
+
+/** True when two topics share most of their words (overlap coefficient of at least 0.6). */
+export function similarTopics(a: string, b: string): boolean {
+  const wa = topicWords(a);
+  const wb = topicWords(b);
+  if (wa.size === 0 || wb.size === 0) return false;
+  const shared = [...wa].filter((w) => wb.has(w)).length;
+  return shared / Math.min(wa.size, wb.size) >= 0.6;
+}
+
+export type ValidationContext = {
+  references: readonly WebReference[];
+  trigger: Candidate;
+  filter: ForbiddenTermsFilter;
+  maxWeightedLength: number;
+  maxTriggerAgeHours: number;
+  excludedTopics: readonly string[];
+  now: Date;
+};
+
+export type ValidationResult =
+  | { ok: true; draft: DraftJson; weightedLength: number }
+  | { ok: false; errors: string[]; forbiddenHits: string[] };
+
+/**
+ * The code checks that gate every draft before Telegram: schema, X length, no em dash, no forbidden term,
+ * sources restricted to pages the search returned plus the trigger URL, fresh trigger, topic not excluded.
+ * Errors are phrased so they can be sent back to the model; forbidden terms are never named in them.
+ */
+export function validateDraft(raw: unknown, ctx: ValidationContext): ValidationResult {
+  const parsed = draftSchema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      errors: parsed.error.issues.map((i) => `JSON field ${i.path.join('.') || '(root)'}: ${i.message}`),
+      forbiddenHits: [],
+    };
+  }
+  const draft = parsed.data;
+  const errors: string[] = [];
+
+  const { weightedLength } = twitterText.parseTweet(draft.tweet);
+  if (weightedLength > ctx.maxWeightedLength) {
+    errors.push(`The tweet is ${weightedLength} characters as X counts them; the limit is ${ctx.maxWeightedLength}.`);
+  }
+  if (draft.tweet.includes('—')) errors.push('The tweet contains an em dash.');
+
+  const hits = ctx.filter.findInValue(draft).map((hit) => `${hit.term} (${hit.path})`);
+  if (hits.length > 0) errors.push('The draft mentions a forbidden subject. Remove any personal or owner-related reference.');
+
+  const allowed = new Map<string, string>();
+  for (const ref of ctx.references) {
+    const key = normalizeUrl(ref.url);
+    if (key) allowed.set(key, ref.url);
+  }
+  if (ctx.trigger.sourceUrl) {
+    const key = normalizeUrl(ctx.trigger.sourceUrl);
+    if (key) allowed.set(key, ctx.trigger.sourceUrl);
+  }
+  const kept = new Map<string, string>();
+  for (const source of draft.sources) {
+    const key = normalizeUrl(source);
+    if (key && allowed.has(key) && !kept.has(key)) kept.set(key, source);
+  }
+  if (kept.size === 0) {
+    errors.push('None of the sources is a page returned by your web search or the trigger URL.');
+  }
+
+  if (hoursBetween(ctx.trigger.publishedAt, ctx.now) > ctx.maxTriggerAgeHours) {
+    errors.push(`The trigger is older than ${ctx.maxTriggerAgeHours} hours.`);
+  }
+  const excluded = ctx.excludedTopics.find((t) => similarTopics(t, draft.topic));
+  if (excluded) errors.push(`This topic was already posted or refused recently: "${excluded}".`);
+
+  if (errors.length > 0) return { ok: false, errors, forbiddenHits: hits };
+  return { ok: true, draft: { ...draft, sources: [...kept.values()] }, weightedLength };
+}

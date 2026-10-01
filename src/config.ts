@@ -46,6 +46,7 @@ const configSchema = z.strictObject({
         chat: z.string().min(1),
       }),
       webSearchTool: z.enum(['web_search', 'web_search_premium']),
+      draftMode: z.enum(['single', 'two_step']),
       dailyCapEur: amount.positive(),
       vatMultiplier,
       countConnectorTokensAsInput: z.boolean(),
@@ -85,7 +86,10 @@ const configSchema = z.strictObject({
   }),
   sources: z.strictObject({
     rssFeeds: z.array(z.url()),
-    hackerNews: z.strictObject({ enabled: z.boolean() }),
+    hackerNews: z.strictObject({
+      enabled: z.boolean(),
+      topStories: z.number().int().min(1).max(100),
+    }),
   }),
   generation: z.strictObject({
     maxAttempts: z.number().int().min(1).max(10),
@@ -101,6 +105,7 @@ const configSchema = z.strictObject({
   }),
   paths: z.strictObject({
     database: z.string().min(1),
+    lock: z.string().min(1),
     forbiddenTerms: z.string().min(1),
     voice: z.string().min(1),
   }),
@@ -128,6 +133,7 @@ export function parseConfig(raw: unknown, rootDir: string = PROJECT_ROOT): AppCo
     ...config,
     paths: {
       database: path.resolve(rootDir, config.paths.database),
+      lock: path.resolve(rootDir, config.paths.lock),
       forbiddenTerms: path.resolve(rootDir, config.paths.forbiddenTerms),
       voice: path.resolve(rootDir, config.paths.voice),
     },

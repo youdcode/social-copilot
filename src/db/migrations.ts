@@ -137,4 +137,33 @@ export const MIGRATIONS: readonly string[] = [
     created_at TEXT NOT NULL DEFAULT ${now}
   );
   `,
+  `
+  -- Items (x:<id>, rss:<id>, hn:<id>) grouped into the draft's topic, so they never trigger twice.
+  ALTER TABLE drafts ADD COLUMN topic_items TEXT NOT NULL DEFAULT '[]'
+    CHECK (json_valid(topic_items) AND json_type(topic_items) = 'array');
+
+  -- Hacker News: the thread URL, and engagement read at fetch time. url holds the linked article when there is one.
+  ALTER TABLE feed_items ADD COLUMN discussion_url TEXT;
+  ALTER TABLE feed_items ADD COLUMN score INTEGER;
+  ALTER TABLE feed_items ADD COLUMN comments INTEGER;
+  CREATE INDEX feed_items_published ON feed_items (published_at);
+
+  -- Round-robin order when the X budget runs out mid-cycle.
+  ALTER TABLE x_users ADD COLUMN last_polled_at TEXT;
+
+  -- One row per slot, so a slot is handled once even across restarts and sleep.
+  CREATE TABLE slot_runs (
+    slot_at TEXT PRIMARY KEY,
+    status TEXT NOT NULL CHECK (status IN ('running', 'drafted', 'pending_draft', 'no_topic', 'failed', 'budget')),
+    detail TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT
+  ) WITHOUT ROWID;
+
+  -- Last run of periodic jobs (poll, purge).
+  CREATE TABLE job_runs (
+    name TEXT PRIMARY KEY,
+    last_run_at TEXT NOT NULL
+  ) WITHOUT ROWID;
+  `,
 ];

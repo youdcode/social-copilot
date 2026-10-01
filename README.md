@@ -10,6 +10,10 @@ Service local qui suit l'actualité tech (API officielle de X en lecture seule, 
 
 ## Commandes
 
+- `npm start` : lance le service. Un battement par minute : purge des textes X de plus de 24 h, veille toutes les 30 minutes (X, RSS, Hacker News), et brouillon du créneau en cours s'il n'a pas encore été traité. Une seule instance à la fois (verrou dans `data/`).
+- `npm run dry-run` : test à blanc. Une veille réelle et un brouillon réel, affichés ici, jamais stockés ni envoyés.
+- `npm run x:resolve` : résout les identifiants des comptes suivis pas encore résolus (0,01 $ par compte, une fois) et affiche ce que X en dit.
+- `npm run x:purge -- <id>` : supprime un post X de la base, sur demande.
 - `npm install` : installe les dépendances, à version exacte.
 - `npm run check` : vérifie les types puis lance les tests.
 - `npm test` : lance les tests seuls.

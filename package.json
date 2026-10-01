@@ -8,19 +8,28 @@
     "node": "24.x"
   },
   "scripts": {
+    "start": "node --env-file=.env src/cli/start.ts",
+    "dry-run": "node --env-file=.env src/cli/dry-run.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"test/**/*.test.ts\"",
     "check": "npm run typecheck && npm test",
     "db:migrate": "node src/cli/migrate.ts",
+    "x:resolve": "node --env-file=.env src/cli/x-resolve.ts",
+    "x:purge": "node src/cli/x-purge.ts",
     "telegram:chat-id": "node --env-file=.env src/cli/telegram-chat-id.ts"
   },
   "dependencies": {
+    "@mistralai/mistralai": "2.7.0",
     "better-sqlite3": "13.0.3",
+    "fast-xml-parser": "5.11.1",
+    "node-cron": "4.6.0",
+    "twitter-text": "3.1.0",
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "24.19.0",
+    "@types/twitter-text": "3.1.10",
     "typescript": "7.0.2"
   }
 }
