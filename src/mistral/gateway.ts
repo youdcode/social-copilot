@@ -34,7 +34,7 @@ export type MistralGateway = {
     user: string;
     jsonSchema: JsonSchemaSpec;
   }): Promise<JsonResult>;
-  /** Free text, no tool, stateless: "Parler à Mistral". */
+  /** Free text, no tool, stateless: "Talk to Mistral". */
   chat(options: { model: string; messages: readonly ChatMessage[] }): Promise<JsonResult>;
 };
 

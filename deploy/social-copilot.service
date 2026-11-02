@@ -1,0 +1,30 @@
+# systemd service for a dedicated server (Linux). See "Moving to a server" in the README.
+# Before enabling it, stop the service on the Mac (npm run mac:uninstall): one bot, one instance.
+#
+# Install, adapting User and the paths:
+#   sudo cp deploy/social-copilot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now social-copilot
+# Logs: journalctl -u social-copilot -f
+
+[Unit]
+Description=Social Copilot (post drafts proposed in Telegram, nothing is ever published)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=social-copilot
+WorkingDirectory=/opt/social-copilot
+ExecStart=/usr/bin/node --env-file=.env src/cli/start.ts
+Restart=on-failure
+RestartSec=60
+# The service writes only to data/: the rest of the system is closed to it.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/social-copilot/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

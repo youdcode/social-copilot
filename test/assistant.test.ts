@@ -24,12 +24,12 @@ function deps(gateway: MistralGateway): AssistantDeps & { logs: string[] } {
 
 describe('rewriteDraft', () => {
   test('returns the new text, and records the spend', async () => {
-    const { gateway, jsonCalls } = scriptedGateway({ json: { tweet_rewrite: ['{"tweet":"Model 5 is out. Half the price."}'] } });
+    const { gateway, jsonCalls } = scriptedGateway({ json: { rewrite_x: ['{"text":"Model 5 is out. Half the price."}'] } });
     const d = deps(gateway);
     const id = insertDraft(d.db);
-    const result = await rewriteDraft(d, getDraft(d.db, id)!, 'plus court');
-    assert.deepEqual(result, { ok: true, tweet: 'Model 5 is out. Half the price.', weightedLength: 31 });
-    assert.match(jsonCalls[0]!.user, /Instruction from the operator:\nplus court/);
+    const result = await rewriteDraft(d, getDraft(d.db, id)!, 'shorter');
+    assert.deepEqual(result, { ok: true, content: { text: 'Model 5 is out. Half the price.', title: null, script: null }, length: 31 });
+    assert.match(jsonCalls[0]!.user, /Instruction from the operator:\nshorter/);
     assert.match(jsonCalls[0]!.user, /https:\/\/lab\.test\/model-5/);
     assert.equal(jsonCalls[0]!.model, d.config.mistral.models.chat);
     assert.ok(spentToday(d.db, d.config, 'mistral', now) > 0);
@@ -37,11 +37,11 @@ describe('rewriteDraft', () => {
 
   test('sends the rejection back and tries again', async () => {
     const { gateway, jsonCalls } = scriptedGateway({
-      json: { tweet_rewrite: ['{"tweet":"Model 5 — cheaper."}', 'not json', '{"tweet":"Model 5, cheaper."}'] },
+      json: { rewrite_x: ['{"text":"Model 5 — cheaper."}', 'not json', '{"text":"Model 5, cheaper."}'] },
     });
     const d = deps(gateway);
     const id = insertDraft(d.db);
-    const result = await rewriteDraft(d, getDraft(d.db, id)!, 'plus court');
+    const result = await rewriteDraft(d, getDraft(d.db, id)!, 'shorter');
     assert.equal(result.ok, true);
     assert.equal(jsonCalls.length, 3);
     assert.match(jsonCalls[1]!.user, /em dash/);
@@ -49,16 +49,29 @@ describe('rewriteDraft', () => {
   });
 
   test('gives up after maxAttempts on a forbidden term, without naming it', async () => {
-    const { gateway } = scriptedGateway({ json: { tweet_rewrite: ['{"tweet":"Built at Acme."}'] } });
+    const { gateway } = scriptedGateway({ json: { rewrite_x: ['{"text":"Built at Acme."}'] } });
     const d = deps(gateway);
     const id = insertDraft(d.db);
-    const result = await rewriteDraft(d, getDraft(d.db, id)!, 'mentionne la boîte');
+    const result = await rewriteDraft(d, getDraft(d.db, id)!, 'mention the company');
     assert.equal(result.ok, false);
     assert.doesNotMatch(result.ok ? '' : result.reason, /Acme/);
   });
 
+  test('rewrites a YouTube draft whole: title, description and script, checked as YouTube', async () => {
+    const script = { hook: 'Cheaper?', shots: [{ visual: 'Price page', voiceover: 'Half the price.', on_screen_text: '-50%' }], duration_s: 20 };
+    const answer = JSON.stringify({ title: 'Model 5, half price', text: 'Sources below.', script });
+    const { gateway, jsonCalls } = scriptedGateway({ json: { rewrite_youtube: [answer] } });
+    const d = deps(gateway);
+    const id = insertDraft(d.db, { network: 'youtube', title: 'Old title', script: JSON.stringify({ ...script, hook: 'Old hook' }) });
+    const result = await rewriteDraft(d, getDraft(d.db, id)!, 'punchier');
+    assert.equal(result.ok, true);
+    if (result.ok) assert.deepEqual(result.content, { text: 'Sources below.', title: 'Model 5, half price', script });
+    assert.match(jsonCalls[0]!.user, /Current title: Old title/);
+    assert.match(jsonCalls[0]!.system, /YouTube Shorts account/);
+  });
+
   test('stops at the Mistral cap before calling', async () => {
-    const { gateway, jsonCalls } = scriptedGateway({ json: { tweet_rewrite: ['{"tweet":"x"}'] } });
+    const { gateway, jsonCalls } = scriptedGateway({ json: { rewrite_x: ['{"text":"x"}'] } });
     const d = deps(gateway);
     d.db.prepare("INSERT INTO spend (service, day, cost_incl_vat) VALUES ('mistral', '2026-10-01', 9)").run();
     const id = insertDraft(d.db);
@@ -72,15 +85,15 @@ describe('chatWithMistral', () => {
     const { gateway, chatCalls } = scriptedGateway({ chat: ['First answer.', 'Second answer.'] });
     const d = deps(gateway);
     insertDraft(d.db);
-    assert.deepEqual(await chatWithMistral(d, 'Bonjour'), { ok: true, answer: 'First answer.' });
-    assert.deepEqual(await chatWithMistral(d, 'Et ensuite ?'), { ok: true, answer: 'Second answer.' });
+    assert.deepEqual(await chatWithMistral(d, 'Hello'), { ok: true, answer: 'First answer.' });
+    assert.deepEqual(await chatWithMistral(d, 'And then?'), { ok: true, answer: 'Second answer.' });
     const system = chatCalls[1]!.messages[0]!;
     assert.equal(system.role, 'system');
     assert.match(system.content, /Dry, first person\./);
     assert.match(system.content, /Lab released Model 5 today/);
     assert.deepEqual(
       chatCalls[1]!.messages.slice(1).map((m) => `${m.role}:${m.content}`),
-      ['user:Bonjour', 'assistant:First answer.', 'user:Et ensuite ?'],
+      ['user:Hello', 'assistant:First answer.', 'user:And then?'],
     );
     assert.equal(resetChat(d.db), 4);
     assert.equal(d.db.prepare('SELECT count(*) FROM chat_messages').pluck().get(), 0);
@@ -100,14 +113,14 @@ describe('chatWithMistral', () => {
   test('asks again when an answer names a forbidden term, then withholds it', async () => {
     const blocked = scriptedGateway({ chat: ['Say hi to Jane Doe.'] });
     const d = deps(blocked.gateway);
-    const result = await chatWithMistral(d, 'Une idée ?');
+    const result = await chatWithMistral(d, 'Any idea?');
     assert.equal(result.ok, false);
     assert.equal(blocked.chatCalls.length, d.config.generation.maxAttempts);
     assert.equal(d.db.prepare("SELECT count(*) FROM chat_messages WHERE role = 'assistant'").pluck().get(), 0);
 
     const fixed = scriptedGateway({ chat: ['Acme rocks.', 'Clean answer.'] });
     const d2 = deps(fixed.gateway);
-    assert.deepEqual(await chatWithMistral(d2, 'Une idée ?'), { ok: true, answer: 'Clean answer.' });
+    assert.deepEqual(await chatWithMistral(d2, 'Any idea?'), { ok: true, answer: 'Clean answer.' });
     assert.match(fixed.chatCalls[1]!.messages.at(-1)!.content, /forbidden subject/);
   });
 });

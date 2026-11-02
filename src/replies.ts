@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { AssistantDeps } from './assistant.ts';
 import { gatherCandidates } from './generation/candidates.ts';
-import { checkTweetText, toJsonSchemaSpec } from './generation/draft.ts';
+import { checkContent, toJsonSchemaSpec } from './generation/draft.ts';
 import { velocity } from './generation/rank.ts';
 import { parseJsonOutput } from './mistral/gateway.ts';
 import { affordableXResources, assertBudget, BudgetExceededError, recordMistralUsage, recordXReads } from './spend.ts';
@@ -78,7 +78,7 @@ export function setReplyMessage(db: AssistantDeps['db'], id: number, messageId: 
   db.prepare('UPDATE replies SET telegram_message_id = ? WHERE id = ?').run(messageId, id);
 }
 
-/** Répondu or Ignorer. Returns false if the reply was already settled, so a repeated click does nothing. */
+/** Replied or Skip. Returns false if the reply was already settled, so a repeated click does nothing. */
 export function settleReply(db: AssistantDeps['db'], id: number, status: 'replied' | 'skipped', now: Date): boolean {
   return (
     db
@@ -107,7 +107,7 @@ export function replySystemPrompt(voice: string): string {
 Voice: ${voice.trim()}
 
 For each post, decide whether a reply from this account would add something: a sharp take, a useful angle, a genuine question, humour that fits. Say no when a reply would be generic, promotional, off-topic, or risky.
-Give the reason in one short sentence, in French, for the operator.
+Give the reason in one short sentence, for the operator.
 When it is worth replying, write exactly ${VARIANTS_PER_REPLY} clearly different replies:
 - native English, 280 characters max, no hashtags, one emoji at most, no em dashes;
 - react to what the post says; never invent numbers, quotes, dates or facts that are not in the post;
@@ -190,7 +190,7 @@ export async function adviseOnReplies(
       const variants = answer.variants
         .map((v) => v.trim())
         .filter((v) => {
-          const check = checkTweetText(v, deps.filter, config.generation.tweetMaxWeightedLength);
+          const check = checkContent({ text: v, title: null, script: null }, deps.filter, 'x');
           errors.push(...check.errors);
           return check.errors.length === 0;
         })
@@ -216,7 +216,7 @@ const PROPOSED_WATCHLIST = `SELECT * FROM replies
     AND post_created_at >= ? ORDER BY post_created_at DESC`;
 
 /**
- * "À qui répondre": takes the fastest-moving recent posts of the watched accounts not taken yet, asks Mistral which
+ * "Who to reply to": takes the fastest-moving recent posts of the watched accounts not taken yet, asks Mistral which
  * deserve a reply (again for any left without advice by an earlier failure), and returns every open suggestion still
  * fresh. Reads nothing from X: it works on stored posts.
  */
@@ -255,7 +255,7 @@ export async function findReplyTargets(deps: AssistantDeps): Promise<{ reviewed:
 }
 
 /**
- * "Réponses reçues": gives advice on mentions not evaluated yet, then returns the open ones still readable,
+ * "Replies received": gives advice on mentions not evaluated yet, then returns the open ones still readable,
  * with how many were judged not worth a reply.
  */
 export async function receivedReplies(deps: AssistantDeps): Promise<{ toAnswer: Reply[]; notWorth: number }> {
@@ -291,7 +291,7 @@ export function parsePastedPost(message: string): PastedPost | undefined {
 }
 
 /**
- * A post pasted in the bot: its text (pasted with /avis, or read from X at the post price for a link, the words around
+ * A post pasted in the bot: its text (pasted with /advice, or read from X at the post price for a link, the words around
  * the link becoming a note to Mistral), then the advice and 3 variants. The text goes to replies, purged after 24 h,
  * never to the chat history. Throws BudgetExceededError at either cap.
  */
@@ -316,10 +316,10 @@ export async function advisePasted(
     author = link.handle;
     assertBudget(db, config, 'x', now);
     if (affordableXResources(db, config, 'post', now) < 1) {
-      throw new BudgetExceededError('x', 'Budget X du jour insuffisant pour lire ce post.');
+      throw new BudgetExceededError('x', "Today's X budget cannot pay for reading this post.");
     }
     const post = await deps.x.lookupPost(link.postId);
-    if (!post) throw new Error('X ne renvoie pas ce post : supprimé, protégé, ou lien erroné. Colle son texte avec /avis.');
+    if (!post) throw new Error('X does not return this post: deleted, protected, or a wrong link. Paste its text after /advice.');
     recordXReads(db, config, 'post', [post.id], now);
     text = post.text;
     createdAt = new Date(post.created_at).toISOString();

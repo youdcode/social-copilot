@@ -127,7 +127,7 @@ export const MIGRATIONS: readonly string[] = [
     UNIQUE (source, guid)
   );
 
-  -- "Parler à Mistral" history, wiped by /reset. Pasted posts go to replies, not here.
+  -- "Talk to Mistral" history, wiped by /reset. Pasted posts go to replies, not here.
   CREATE TABLE chat_messages (
     id INTEGER PRIMARY KEY,
     network TEXT NOT NULL DEFAULT 'x',
@@ -187,5 +187,29 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE replies ADD COLUMN evaluated_at TEXT;
   ALTER TABLE replies ADD COLUMN telegram_message_id INTEGER;
   CREATE INDEX replies_origin_post ON replies (origin, x_post_id);
+  `,
+  `
+  -- Several networks: the main text is not only a tweet any more; YouTube needs a title, video networks a script.
+  ALTER TABLE drafts RENAME COLUMN tweet TO text;
+  ALTER TABLE drafts ADD COLUMN title TEXT;
+  ALTER TABLE drafts ADD COLUMN script TEXT CHECK (script IS NULL OR json_valid(script));
+  CREATE INDEX drafts_network_status ON drafts (network, status);
+
+  -- Topics are excluded per network: the same news can go out on X and on LinkedIn.
+  ALTER TABLE excluded_topics ADD COLUMN network TEXT NOT NULL DEFAULT 'x';
+
+  -- One run per network and slot.
+  CREATE TABLE slot_runs_by_network (
+    network TEXT NOT NULL,
+    slot_at TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('running', 'drafted', 'pending_draft', 'no_topic', 'failed', 'budget')),
+    detail TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    PRIMARY KEY (network, slot_at)
+  ) WITHOUT ROWID;
+  INSERT INTO slot_runs_by_network SELECT 'x', slot_at, status, detail, started_at, finished_at FROM slot_runs;
+  DROP TABLE slot_runs;
+  ALTER TABLE slot_runs_by_network RENAME TO slot_runs;
   `,
 ];

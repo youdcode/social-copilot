@@ -1,7 +1,9 @@
 import cron from 'node-cron';
 import type { Db } from './db/database.ts';
-import type { GeneratorDeps, SlotOutcome } from './generation/generator.ts';
+import type { ClusterCache, GeneratorDeps, SlotOutcome } from './generation/generator.ts';
 import { generateDraft } from './generation/generator.ts';
+import { enabledNetworks } from './config.ts';
+import { NETWORK_SPECS, type Network } from './networks.ts';
 import { createSerialQueue, type SerialQueue } from './queue.ts';
 import { collectHackerNews } from './sources/hn.ts';
 import { collectRss } from './sources/rss.ts';
@@ -25,10 +27,12 @@ export type ServiceState = {
   budgetAlerts: Set<string>;
   /** Heartbeats and drafts asked from the bot run here, one at a time: two drafts are never written at once. */
   generation: SerialQueue;
+  /** Topics grouped from the latest items, shared by the networks drafting at the same time. */
+  clusterCache: ClusterCache;
 };
 
 export function createServiceState(): ServiceState {
-  return { rssCache: new Map(), budgetAlerts: new Set(), generation: createSerialQueue() };
+  return { rssCache: new Map(), budgetAlerts: new Set(), generation: createSerialQueue(), clusterCache: {} };
 }
 
 const PURGE_EVERY_MINUTES = 60;
@@ -70,14 +74,14 @@ export async function runPoll(deps: ServiceDeps, state: ServiceState): Promise<P
   try {
     assertBudget(db, config, 'x', now);
     const { notFound } = await resolveWatchedAccounts(db, config, deps.x, now);
-    if (notFound.length > 0) report.problems.push(`Comptes X introuvables : ${notFound.join(', ')}`);
+    if (notFound.length > 0) report.problems.push(`X accounts not found: ${notFound.join(', ')}`);
     report.x = await pollWatchedAccounts(db, config, deps.x, now);
     if (report.x.stoppedByBudget) {
-      await alertBudgetOnce(deps, state, 'x', `Plafond journalier X atteint (${config.x.dailyCapUsd} $ TTC) : lecture de X arrêtée jusqu'à minuit UTC.`);
+      await alertBudgetOnce(deps, state, 'x', `Daily X cap reached ($${config.x.dailyCapUsd} incl. VAT): X reads stop until midnight UTC.`);
     }
   } catch (error) {
     if (error instanceof BudgetExceededError) await alertBudgetOnce(deps, state, 'x', error.message);
-    else report.problems.push(`X : ${(error as Error).message}`);
+    else report.problems.push(`X: ${(error as Error).message}`);
   }
 
   if (deps.xUser) {
@@ -86,59 +90,71 @@ export async function runPoll(deps: ServiceDeps, state: ServiceState): Promise<P
       report.mentions = mentions.newMentions;
       if (mentions.newMentions > 0) {
         await deps.notifier.notice(
-          `📥 ${mentions.newMentions} nouvelle(s) réponse(s) reçue(s) sur X : menu X, « Réponses reçues ».`,
+          `📥 ${mentions.newMentions} new repl${mentions.newMentions === 1 ? 'y' : 'ies'} received on X: X menu, "Replies received".`,
         );
       }
     } catch (error) {
-      report.problems.push(`Mentions X : ${(error as Error).message}`);
+      report.problems.push(`X mentions: ${(error as Error).message}`);
     }
   }
 
   const options = { maxAgeHours: config.generation.triggerMaxAgeHours, ...(deps.fetch ? { fetch: deps.fetch } : {}) };
   const rss = await collectRss(db, config.sources.rssFeeds, now, { ...options, cache: state.rssCache });
   report.rssNew = rss.newItems;
-  if (rss.failed.length > 0) report.problems.push(`Flux RSS en échec : ${rss.failed.join(', ')}`);
+  if (rss.failed.length > 0) report.problems.push(`RSS feeds failing: ${rss.failed.join(', ')}`);
 
   if (config.sources.hackerNews.enabled) {
     try {
       report.hnNew = (await collectHackerNews(db, now, { ...options, topStories: config.sources.hackerNews.topStories })).newItems;
     } catch (error) {
-      report.problems.push(`Hacker News : ${(error as Error).message}`);
+      report.problems.push(`Hacker News: ${(error as Error).message}`);
     }
   }
   return report;
 }
 
-/** Runs the slot in progress if it was never handled: a slot is handled once, even across sleep and restarts. */
-export async function runSlotIfDue(deps: ServiceDeps, state: ServiceState): Promise<SlotOutcome | null> {
+/**
+ * Runs, for each enabled network, its slot in progress if it was never handled: a slot is handled once, even across
+ * sleep and restarts. Networks whose slots fall together share one grouping of the items into topics.
+ */
+export async function runSlotsIfDue(
+  deps: ServiceDeps,
+  state: ServiceState,
+): Promise<Array<{ network: Network; outcome: SlotOutcome }>> {
   const { db, config } = deps;
-  const slot = currentSlot(deps.now(), config.slots, config.timezone);
-  const key = slot.toISOString();
-  const claimed = db
-    .prepare("INSERT OR IGNORE INTO slot_runs (slot_at, status, started_at) VALUES (?, 'running', ?)")
-    .run(key, deps.now().toISOString()).changes;
-  if (claimed === 0) return null;
+  const results: Array<{ network: Network; outcome: SlotOutcome }> = [];
+  for (const network of enabledNetworks(config)) {
+    const slot = currentSlot(deps.now(), config.networks[network].slots, config.timezone);
+    const key = slot.toISOString();
+    const claimed = db
+      .prepare("INSERT OR IGNORE INTO slot_runs (network, slot_at, status, started_at) VALUES (?, ?, 'running', ?)")
+      .run(network, key, deps.now().toISOString()).changes;
+    if (claimed === 0) continue;
 
-  let outcome: SlotOutcome;
-  try {
-    outcome = await generateDraft(deps, slot, { save: true });
-  } catch (error) {
-    outcome = { status: 'failed', detail: (error as Error).message, attempts: [] };
-    await deps.notifier.alert(`Créneau ${key} en échec : ${outcome.detail}`);
+    const name = NETWORK_SPECS[network].name;
+    let outcome: SlotOutcome;
+    try {
+      outcome = await generateDraft(deps, network, slot, { save: true, clusterCache: state.clusterCache });
+    } catch (error) {
+      outcome = { status: 'failed', detail: (error as Error).message, attempts: [] };
+      await deps.notifier.alert(`${name} slot ${key} failed: ${outcome.detail}`);
+    }
+    if (outcome.status === 'budget') await alertBudgetOnce(deps, state, 'mistral', outcome.detail);
+    db.prepare('UPDATE slot_runs SET status = ?, detail = ?, finished_at = ? WHERE network = ? AND slot_at = ?').run(
+      outcome.status,
+      outcome.detail,
+      deps.now().toISOString(),
+      network,
+      key,
+    );
+    deps.log(`${name} slot ${key}: ${outcome.status} (${outcome.detail})`);
+    results.push({ network, outcome });
   }
-  if (outcome.status === 'budget') await alertBudgetOnce(deps, state, 'mistral', outcome.detail);
-  db.prepare('UPDATE slot_runs SET status = ?, detail = ?, finished_at = ? WHERE slot_at = ?').run(
-    outcome.status,
-    outcome.detail,
-    deps.now().toISOString(),
-    key,
-  );
-  deps.log(`Créneau ${key} : ${outcome.status} (${outcome.detail})`);
-  return outcome;
+  return results;
 }
 
 /**
- * One heartbeat: purge, poll and slot, each only when due. Skipped while a heartbeat or a draft asked from the bot
+ * One heartbeat: purge, poll and slots, each only when due. Skipped while a heartbeat or a draft asked from the bot
  * is still running: the next minute catches up.
  */
 export async function tick(deps: ServiceDeps, state: ServiceState): Promise<void> {
@@ -152,19 +168,19 @@ async function heartbeat(deps: ServiceDeps, state: ServiceState): Promise<void> 
     if (jobDue(db, 'purge', PURGE_EVERY_MINUTES, deps.now())) {
       const purged = purgeExpiredXText(db, config, deps.now());
       markJob(db, 'purge', deps.now());
-      if (purged > 0) deps.log(`Purge : ${purged} texte(s) X effacé(s).`);
+      if (purged > 0) deps.log(`Purge: ${purged} X text(s) erased.`);
     }
     if (jobDue(db, 'poll', config.x.pollIntervalMinutes, deps.now())) {
       markJob(db, 'poll', deps.now());
       const report = await runPoll(deps, state);
       deps.log(
-        `Veille : X ${report.x ? `${report.x.newPosts} post(s) sur ${report.x.polled} compte(s)` : 'non lu'}, mentions ${report.mentions ?? 'non lues'}, RSS ${report.rssNew}, HN ${report.hnNew}`,
+        `Watch: X ${report.x ? `${report.x.newPosts} post(s) from ${report.x.polled} account(s)` : 'not read'}, mentions ${report.mentions ?? 'not read'}, RSS ${report.rssNew}, HN ${report.hnNew}`,
       );
       for (const problem of report.problems) deps.log(problem);
     }
-    await runSlotIfDue(deps, state);
+    await runSlotsIfDue(deps, state);
   } catch (error) {
-    deps.log(`Erreur pendant le cycle : ${(error as Error).message}`);
+    deps.log(`Error during the heartbeat: ${(error as Error).message}`);
   }
 }
 
@@ -174,7 +190,7 @@ async function heartbeat(deps: ServiceDeps, state: ServiceState): Promise<void> 
  */
 export function startService(deps: ServiceDeps, state: ServiceState = createServiceState()): { stop(): void } {
   deps.db
-    .prepare("UPDATE slot_runs SET status = 'failed', detail = 'Interrompu', finished_at = ? WHERE status = 'running'")
+    .prepare("UPDATE slot_runs SET status = 'failed', detail = 'Interrupted', finished_at = ? WHERE status = 'running'")
     .run(deps.now().toISOString());
   const task = cron.schedule('* * * * *', () => void tick(deps, state), { timezone: deps.config.timezone });
   void tick(deps, state);

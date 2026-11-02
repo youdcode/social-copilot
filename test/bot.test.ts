@@ -17,8 +17,8 @@ const now = new Date('2026-10-01T10:00:00Z');
 const botInfo = {
   id: 1,
   is_bot: true,
-  first_name: 'Copilote',
-  username: 'copilote_test_bot',
+  first_name: 'Copilot',
+  username: 'copilot_test_bot',
   can_join_groups: false,
   can_read_all_group_messages: false,
   supports_inline_queries: false,
@@ -39,6 +39,7 @@ function setup(gateway: MistralGateway = scriptedGateway({}).gateway, options: {
     config: testConfig((c) => {
       c.sources.rssFeeds = [];
       c.sources.hackerNews.enabled = false;
+      c.networks.instagram.enabled = false;
     }),
     gateway,
     filter: testFilter,
@@ -117,7 +118,7 @@ describe('bot access', () => {
     const t = setup();
     await t.message('/start', { from: STRANGER });
     await t.message('hello', { from: STRANGER });
-    await t.click('x:pending', 50, STRANGER);
+    await t.click('pend:x', 50, STRANGER);
     assert.deepEqual(t.calls, []);
   });
 });
@@ -127,53 +128,53 @@ describe('menus and commands', () => {
     const t = setup();
     await t.message('/start');
     const menu = t.sent()[0]!;
-    assert.match(menu.text, /Choisis un réseau/);
-    assert.equal(menu.reply_markup.inline_keyboard[1][0].text, 'Instagram · en attente');
+    assert.match(menu.text, /Pick a network/);
+    assert.equal(menu.reply_markup.inline_keyboard[2][0].text, 'Instagram · off');
     await t.message('/stats');
-    assert.match(t.sent()[1]!.text, /Mistral : 0,00 € sur 1,00 €/);
+    assert.match(t.sent()[1]!.text, /Mistral: €0\.00 of €1\.00/);
   });
 
-  test('Brouillons en attente resends each pending card and remembers it', async () => {
+  test('Pending drafts resends each pending card and remembers it', async () => {
     const t = setup();
     const id = insertDraft(t.deps.db);
-    await t.click('x:pending');
+    await t.click('pend:x');
     assert.equal(t.calls[0]!.method, 'answerCallbackQuery');
-    assert.match(t.sent()[0]!.text, new RegExp(`brouillon n° ${id}`));
+    assert.match(t.sent()[0]!.text, new RegExp(`X · draft #${id}`));
     assert.equal(getDraft(t.deps.db, id)!.telegramMessageId, 1000);
   });
 });
 
 describe('draft buttons', () => {
-  test('Non refuses, asks for a reason and starts one new draft, even if the click comes twice', async () => {
+  test('No refuses, asks for a reason and starts one new draft, even if the click comes twice', async () => {
     const t = setup();
     const id = insertDraft(t.deps.db, { telegram_message_id: 50 });
     await t.click(`d:${id}:no`);
     await t.click(`d:${id}:no`);
     assert.equal(getDraft(t.deps.db, id)!.status, 'refused');
     const texts = t.sent().map((m) => m.text);
-    assert.equal(texts.filter((m) => /Motif du refus/.test(m)).length, 1);
+    assert.equal(texts.filter((m) => /Why not\?/.test(m)).length, 1);
     // No fresh item to write about: the new draft attempt ends there, once.
-    assert.equal(texts.filter((m) => /Pas d’autre sujet/.test(m)).length, 1);
+    assert.equal(texts.filter((m) => /No other X topic/.test(m)).length, 1);
     const answers = t.calls.filter((c) => c.method === 'answerCallbackQuery').map((c) => c.payload.text);
-    assert.deepEqual(answers, ['Refusé. Je cherche un autre sujet.', 'Déjà traité.']);
+    assert.deepEqual(answers, ['Refused. Looking for another topic.', 'Already handled.']);
     assert.equal(t.calls.filter((c) => c.method === 'editMessageText').length, 1);
 
-    const question = t.sent().find((m) => /Motif du refus/.test(m.text))!;
+    const question = t.sent().find((m) => /Why not\?/.test(m.text))!;
     const questionId = 1000 + t.sent().indexOf(question);
-    await t.message('trop vu', { replyTo: questionId });
-    assert.equal(getDraft(t.deps.db, id)!.refusalReason, 'trop vu');
+    await t.message('seen it', { replyTo: questionId });
+    assert.equal(getDraft(t.deps.db, id)!.refusalReason, 'seen it');
   });
 
-  test('a late Non, whose click Telegram no longer accepts, still brings a new topic', async () => {
+  test('a late No, whose click Telegram no longer accepts, still brings a new topic', async () => {
     const t = setup(undefined, { failAnswers: true });
     const id = insertDraft(t.deps.db, { telegram_message_id: 50 });
     await t.click(`d:${id}:no`);
     assert.equal(getDraft(t.deps.db, id)!.status, 'refused');
-    assert.equal(t.sent().filter((m) => /Pas d’autre sujet/.test(m.text)).length, 1);
-    assert.equal(t.sent().filter((m) => /Motif du refus/.test(m.text)).length, 1);
+    assert.equal(t.sent().filter((m) => /No other X topic/.test(m.text)).length, 1);
+    assert.equal(t.sent().filter((m) => /Why not\?/.test(m.text)).length, 1);
   });
 
-  test('Posté then the link of the published post', async () => {
+  test('Posted then the link of the published post', async () => {
     const t = setup();
     const id = insertDraft(t.deps.db, { telegram_message_id: 50 });
     await t.click(`d:${id}:post`);
@@ -183,17 +184,17 @@ describe('draft buttons', () => {
   });
 
   test('a reply to a card is an edit instruction: Mistral rewrites and a new card arrives', async () => {
-    const { gateway, jsonCalls } = scriptedGateway({ json: { tweet_rewrite: ['{"tweet":"Model 5: half the price."}'] } });
+    const { gateway, jsonCalls } = scriptedGateway({ json: { rewrite_x: ['{"text":"Model 5: half the price."}'] } });
     const t = setup(gateway);
     const id = insertDraft(t.deps.db, { telegram_message_id: 50 });
-    await t.message('plus court', { replyTo: 50 });
+    await t.message('shorter', { replyTo: 50 });
     assert.equal(jsonCalls.length, 1);
     const draft = getDraft(t.deps.db, id)!;
-    assert.equal(draft.tweet, 'Model 5: half the price.');
+    assert.equal(draft.text, 'Model 5: half the price.');
     assert.equal(draft.status, 'edited');
     const edit = t.calls.find((c) => c.method === 'editMessageText')!;
     assert.equal(edit.payload.message_id, 50);
-    assert.match(edit.payload.text, /Remplacé par la version modifiée/);
+    assert.match(edit.payload.text, /Replaced by the edited version/);
     assert.deepEqual(edit.payload.reply_markup, { inline_keyboard: [] });
     const card = t.sent().find((m) => /Model 5: half the price\./.test(m.text))!;
     assert.equal(draft.telegramMessageId, 1000 + t.sent().indexOf(card));
@@ -203,39 +204,39 @@ describe('draft buttons', () => {
 describe('edit instructions', () => {
   test('two quick instructions: the second rewrites the result of the first, and edits its card', async () => {
     const { gateway, jsonCalls } = scriptedGateway({
-      json: { tweet_rewrite: ['{"tweet":"First rewrite."}', '{"tweet":"Second rewrite."}'] },
+      json: { rewrite_x: ['{"text":"First rewrite."}', '{"text":"Second rewrite."}'] },
     });
     const t = setup(gateway);
     const id = insertDraft(t.deps.db, { telegram_message_id: 50 });
-    await t.message('plus court', { replyTo: 50 });
+    await t.message('shorter', { replyTo: 50 });
     const firstCard = getDraft(t.deps.db, id)!.telegramMessageId!;
-    await t.message('avec une question', { replyTo: firstCard });
+    await t.message('with a question', { replyTo: firstCard });
     assert.match(jsonCalls[1]!.user, /Current tweet:\nFirst rewrite\./);
     const edits = t.calls.filter((c) => c.method === 'editMessageText').map((c) => c.payload.message_id);
     assert.deepEqual(edits, [50, firstCard]);
-    assert.equal(getDraft(t.deps.db, id)!.tweet, 'Second rewrite.');
+    assert.equal(getDraft(t.deps.db, id)!.text, 'Second rewrite.');
   });
 });
 
 describe('free messages', () => {
   test('go to Mistral, and the answer comes back', async () => {
-    const { gateway, chatCalls } = scriptedGateway({ chat: ['Voici une idée.'] });
+    const { gateway, chatCalls } = scriptedGateway({ chat: ['Here is an idea.'] });
     const t = setup(gateway);
-    await t.message('Une idée de tweet ?');
+    await t.message('Any tweet idea?');
     assert.equal(chatCalls.length, 1);
-    assert.equal(t.sent().at(-1)!.text, 'Voici une idée.');
+    assert.equal(t.sent().at(-1)!.text, 'Here is an idea.');
   });
 
   test('a link to an X post gets the advice and the variants, not a chat answer', async () => {
     const advice = JSON.stringify({ posts: [{ id: '1', worth_replying: true, reason: 'bon angle', variants: ['Fair point.'] }] });
     const { gateway, chatCalls, jsonCalls } = scriptedGateway({ json: { reply_advice: [advice] } });
     const t = setup(gateway);
-    await t.message('ton avis ? https://x.com/lab/status/42');
+    await t.message('your take? https://x.com/lab/status/42');
     assert.equal(chatCalls.length, 0);
     assert.match(jsonCalls[0]!.user, /Text: "Model 5 ships today at half the price"/);
-    assert.match(jsonCalls[0]!.user, /Operator's note \(not part of the post\): ton avis \?/);
+    assert.match(jsonCalls[0]!.user, /Operator's note \(not part of the post\): your take\?/);
     const card = t.sent().at(-1)!;
-    assert.match(card.text, /Post collé/);
+    assert.match(card.text, /Pasted post/);
     assert.match(card.text, /Fair point\./);
     assert.equal(t.deps.db.prepare('SELECT count(*) FROM chat_messages').pluck().get(), 0);
   });
@@ -243,7 +244,7 @@ describe('free messages', () => {
   test('a Mistral cap is told in the chat', async () => {
     const t = setup(scriptedGateway({ chat: ['never'] }).gateway);
     t.deps.db.prepare("INSERT INTO spend (service, day, cost_incl_vat) VALUES ('mistral', '2026-10-01', 9)").run();
-    await t.message('Salut');
-    assert.match(t.sent().at(-1)!.text, /Plafond journalier Mistral atteint/);
+    await t.message('Hi');
+    assert.match(t.sent().at(-1)!.text, /Daily Mistral cap reached/);
   });
 });

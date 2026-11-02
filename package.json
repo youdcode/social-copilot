@@ -1,8 +1,8 @@
 {
-  "name": "copilote-x",
+  "name": "social-copilot",
   "version": "0.1.0",
   "private": true,
-  "description": "Prépare des brouillons de posts X à partir de l'actualité tech et les propose dans un bot Telegram privé. Ne publie jamais rien.",
+  "description": "Watches tech news (X API read-only, RSS, Hacker News), drafts posts for X, Threads, Bluesky, LinkedIn, Instagram, TikTok and YouTube Shorts with Mistral, and proposes them in a private Telegram bot. Never publishes anything.",
   "license": "MIT",
   "type": "module",
   "engines": {

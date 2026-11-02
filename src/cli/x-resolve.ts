@@ -18,15 +18,15 @@ await runCli(async () => {
   try {
     const now = new Date();
     const { resolved, notFound } = await resolveWatchedAccounts(db, config, createXClient({ bearerToken: X_BEARER_TOKEN }), now);
-    if (resolved.length === 0 && notFound.length === 0) console.log('Tous les comptes suivis sont déjà résolus.');
+    if (resolved.length === 0 && notFound.length === 0) console.log('All watched accounts are already resolved.');
     for (const user of resolved) {
       const followers = user.public_metrics?.followers_count ?? '?';
-      const badge = user.verified_type && user.verified_type !== 'none' ? user.verified_type : user.verified ? 'verified' : 'non vérifié';
+      const badge = user.verified_type && user.verified_type !== 'none' ? user.verified_type : user.verified ? 'verified' : 'not verified';
       const bio = (user.description ?? '').replace(/\s+/g, ' ').slice(0, 90);
-      console.log(`@${user.username} | ${user.name} | ${badge} | ${followers} abonnés | ${user.url ?? ''} | ${bio}`);
+      console.log(`@${user.username} | ${user.name} | ${badge} | ${followers} followers | ${user.url ?? ''} | ${bio}`);
     }
     if (notFound.length > 0) console.log(`Introuvables : ${notFound.join(', ')}`);
-    console.log(`Dépense X du jour : ${spentToday(db, config, 'x', now).toFixed(4)} $ TTC`);
+    console.log(`X spend today: $${spentToday(db, config, 'x', now).toFixed(4)} incl. VAT`);
   } finally {
     db.close();
     lock.release();

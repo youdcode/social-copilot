@@ -27,10 +27,10 @@ export function privateChatsFromUpdates(updates: readonly TelegramUpdate[]): Pri
  */
 export function explainTelegramError(status: number, description = ''): string {
   if (status === 401 || status === 404) {
-    return 'Telegram refuse le jeton : vérifie TELEGRAM_BOT_TOKEN dans .env.';
+    return 'Telegram refuses the token: check TELEGRAM_BOT_TOKEN in .env.';
   }
   if (status === 409) {
-    return "Une autre instance interroge déjà ce bot, ou un webhook est actif. Arrête-la puis relance.";
+    return 'Another instance is already polling this bot, or a webhook is set. Stop it, then start again.';
   }
-  return `Erreur Telegram ${status}${description ? ` : ${description}` : ''}`;
+  return `Telegram error ${status}${description ? `: ${description}` : ''}`;
 }

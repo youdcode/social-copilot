@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 /** Neutral name of the launch agent: it says nothing about the account. */
-export const LAUNCHD_LABEL = 'local.copilote-x';
+export const LAUNCHD_LABEL = 'local.social-copilot';
 
 function xml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

@@ -15,8 +15,8 @@ export function loadVoice(filePath: string): string {
       .replace(/<!--[\s\S]*?-->/g, '')
       .trim();
   } catch {
-    throw new VoiceError(`Fichier de voix introuvable : ${filePath}. Écris-le avant de générer.`);
+    throw new VoiceError(`Voice file not found: ${filePath}. Write it (start from voice.example.md) before generating.`);
   }
-  if (content === '') throw new VoiceError(`Le fichier de voix ${filePath} est vide.`);
+  if (content === '') throw new VoiceError(`The voice file ${filePath} is empty.`);
   return content;
 }

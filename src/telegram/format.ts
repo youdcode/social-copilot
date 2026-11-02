@@ -1,6 +1,8 @@
 import { InlineKeyboard } from 'grammy';
-import type { AppConfig } from '../config.ts';
+import { enabledNetworks, type AppConfig } from '../config.ts';
 import type { Draft } from '../drafts.ts';
+import type { VideoScript } from '../generation/draft.ts';
+import { NETWORK_SPECS, NETWORKS, type Network } from '../networks.ts';
 import { replyAgeMinutes, type Reply } from '../replies.ts';
 import type { DailyStats } from '../stats.ts';
 
@@ -29,101 +31,125 @@ export function fitsCopyButton(text: string, max: number): boolean {
   return text.length <= max;
 }
 
-export const NETWORK_NAMES: Record<keyof AppConfig['networks'], string> = {
-  x: 'X',
-  instagram: 'Instagram',
-  tiktok: 'TikTok',
-  youtube: 'YouTube',
-};
+/** Telegram refuses messages over 4,096 characters. */
+export const MESSAGE_MAX = 4096;
 
 const PILLAR_NAMES: Record<Draft['pillar'], string> = {
-  ai: 'IA',
+  ai: 'AI',
   startups: 'startups',
   deeptech: 'deeptech',
-  devtools: 'outils de dev',
+  devtools: 'dev tools',
   motion: 'motion design',
 };
 
-const ASSET_NAMES = { video: 'vidéo', image: 'image', screenshot: "capture d'écran" } as const;
+const ASSET_NAMES = { video: 'video', image: 'image', carousel: 'carousel', screenshot: 'screenshot' } as const;
 
 function assetLine(draft: Draft): string | undefined {
   const asset = draft.assetRequest;
   if (!asset) return undefined;
   const duration = asset.type === 'video' && asset.duration_s > 0 ? `, ${asset.duration_s} s` : '';
-  const ready = draft.assetReadyAt ? ' (prête)' : '';
-  return `🎬 <b>Matière${ready} :</b> ${ASSET_NAMES[asset.type]}${duration}. ${escapeHtml(asset.brief)}`;
+  const ready = draft.assetReadyAt ? ' (ready)' : '';
+  return `🎬 <b>Asset${ready}:</b> ${ASSET_NAMES[asset.type]}${duration}. ${escapeHtml(asset.brief)}`;
 }
 
 function statusLine(draft: Draft): string | undefined {
   if (draft.status === 'posted') {
-    return draft.postedUrl ? `✅ Posté : ${link(draft.postedUrl, 'voir le tweet')}` : '✅ Posté';
+    return draft.postedUrl ? `✅ Posted: ${link(draft.postedUrl, 'see the post')}` : '✅ Posted';
   }
   if (draft.status === 'refused') {
-    return draft.refusalReason ? `❌ Refusé : ${escapeHtml(draft.refusalReason)}` : '❌ Refusé';
+    return draft.refusalReason ? `❌ Refused: ${escapeHtml(draft.refusalReason)}` : '❌ Refused';
   }
-  if (draft.status === 'edited') return '✏️ Version modifiée';
+  if (draft.status === 'edited') return '✏️ Edited version';
   return undefined;
 }
 
-export type Card = { text: string; keyboard?: InlineKeyboard };
-
-/**
- * A draft card: the text, then the pillar, the "why" line, the sources and the asset request.
- * Pending drafts get Copier (native button up to 256 characters, else the text sits in a block), Posté, Modifier, Non.
- */
-export function draftCard(draft: Draft, copyMax: number): Card {
-  const pending = draft.status === 'proposed' || draft.status === 'edited';
-  const copyable = fitsCopyButton(draft.tweet, copyMax);
-  const lines = [
-    `<b>${NETWORK_NAMES[draft.network as keyof typeof NETWORK_NAMES] ?? draft.network} · brouillon n° ${draft.id}</b> · ${PILLAR_NAMES[draft.pillar]} · ${draft.weightedLength}/280`,
-    ...(statusLine(draft) ? [statusLine(draft)!] : []),
-    '',
-    copyable ? escapeHtml(draft.tweet) : `<pre>${escapeHtml(draft.tweet)}</pre>`,
-    '',
-    `<b>Pourquoi :</b> ${escapeHtml(draft.whyItMatters)}`,
-    `<b>Sources :</b> ${draft.sources.map((s) => link(s, shortUrl(s))).join(' · ')}`,
-    `<b>Déclencheur :</b> ${link(draft.triggerUrl, shortUrl(draft.triggerUrl))}`,
-    ...(assetLine(draft) ? [assetLine(draft)!] : []),
+export function scriptLines(script: VideoScript): string[] {
+  return [
+    `<b>Script</b> (${script.duration_s} s)`,
+    `<b>Hook:</b> ${escapeHtml(script.hook)}`,
+    ...script.shots.flatMap((shot, i) => [
+      `${i + 1}. 🎥 ${escapeHtml(shot.visual)}`,
+      ...(shot.voiceover ? [`    🗣 ${escapeHtml(shot.voiceover)}`] : []),
+      ...(shot.on_screen_text ? [`    🔤 ${escapeHtml(shot.on_screen_text)}`] : []),
+    ]),
   ];
-  if (!pending) return { text: lines.join('\n') };
-
-  const keyboard = new InlineKeyboard();
-  if (copyable) keyboard.copyText('📋 Copier', draft.tweet).row();
-  keyboard
-    .text({ text: '✅ Posté', style: 'success' }, `d:${draft.id}:post`)
-    .text('✏️ Modifier', `d:${draft.id}:edit`)
-    .text({ text: '❌ Non', style: 'danger' }, `d:${draft.id}:no`);
-  return { text: lines.join('\n'), keyboard };
 }
 
-/** A card of "Demandes de visuels": type, brief, duration, and the Matière prête button. */
+/** A message to send, with its buttons. before holds messages to send first, when the card would be too long. */
+export type Card = { text: string; keyboard?: InlineKeyboard; before?: string[] };
+
+/**
+ * A draft card: the title (YouTube), the text, the script (video networks), then the pillar, the "why" line, the
+ * sources and the asset request. Pending drafts get Copy (native button up to 256 characters, else the text sits in a
+ * block), Posted, Edit and No.
+ */
+export function draftCard(draft: Draft, copyMax: number): Card {
+  const spec = NETWORK_SPECS[draft.network];
+  const pending = draft.status === 'proposed' || draft.status === 'edited';
+  const copyable = fitsCopyButton(draft.text, copyMax);
+  const body = copyable ? escapeHtml(draft.text) : `<pre>${escapeHtml(draft.text)}</pre>`;
+  const lines = (textBlock: string) => [
+    `<b>${spec.name} · draft #${draft.id}</b> · ${PILLAR_NAMES[draft.pillar]} · ${draft.length}/${spec.maxLength}`,
+    ...(statusLine(draft) ? [statusLine(draft)!] : []),
+    ...(draft.title ? ['', `<b>Title:</b> ${escapeHtml(draft.title)}`] : []),
+    '',
+    textBlock,
+    ...(draft.script ? ['', ...scriptLines(draft.script)] : []),
+    '',
+    `<b>Why:</b> ${escapeHtml(draft.whyItMatters)}`,
+    `<b>Sources:</b> ${draft.sources.map((s) => link(s, shortUrl(s))).join(' · ')}`,
+    `<b>Trigger:</b> ${link(draft.triggerUrl, shortUrl(draft.triggerUrl))}`,
+    ...(assetLine(draft) ? [assetLine(draft)!] : []),
+  ];
+  let text = lines(body).join('\n');
+  let before: string[] | undefined;
+  if (text.length > MESSAGE_MAX) {
+    // A long post with a long script cannot share one message: the text goes first, on its own.
+    before = [`<pre>${escapeHtml(draft.text)}</pre>`];
+    text = lines(`<i>The ${spec.textName} is in the message above.</i>`).join('\n');
+  }
+  const card: Card = { text, ...(before ? { before } : {}) };
+  if (!pending) return card;
+
+  const keyboard = new InlineKeyboard();
+  if (copyable) keyboard.copyText('📋 Copy', draft.text);
+  if (draft.title && fitsCopyButton(draft.title, copyMax)) keyboard.copyText('📋 Title', draft.title);
+  if (copyable || draft.title) keyboard.row();
+  keyboard
+    .text({ text: '✅ Posted', style: 'success' }, `d:${draft.id}:post`)
+    .text('✏️ Edit', `d:${draft.id}:edit`)
+    .text({ text: '❌ No', style: 'danger' }, `d:${draft.id}:no`);
+  return { ...card, keyboard };
+}
+
+/** A card of "Asset requests": type, brief, duration, and the Asset ready button. */
 export function assetCard(draft: Draft): Card {
   const lines = [
-    `<b>Visuel pour le brouillon n° ${draft.id}</b>${draft.status === 'posted' ? ' (posté)' : ''}`,
+    `<b>Asset for ${NETWORK_SPECS[draft.network].name} draft #${draft.id}</b>${draft.status === 'posted' ? ' (posted)' : ''}`,
     assetLine(draft) ?? '',
     '',
-    `<i>${escapeHtml(draft.tweet)}</i>`,
+    `<i>${escapeHtml(draft.title ?? draft.text)}</i>`,
   ];
   if (draft.assetReadyAt) return { text: lines.join('\n') };
-  return { text: lines.join('\n'), keyboard: new InlineKeyboard().text('✅ Matière prête', `a:${draft.id}`) };
+  return { text: lines.join('\n'), keyboard: new InlineKeyboard().text('✅ Asset ready', `a:${draft.id}`) };
 }
 
 const ORIGIN_TITLES: Record<Reply['origin'], string> = {
-  watchlist: 'À qui répondre',
-  mention: 'Réponse reçue',
-  pasted: 'Post collé',
+  watchlist: 'Who to reply to',
+  mention: 'Reply received',
+  pasted: 'Pasted post',
 };
 
 function age(minutes: number): string {
   if (minutes < 60) return `${minutes} min`;
   const hours = Math.floor(minutes / 60);
-  return hours < 48 ? `${hours} h` : `${Math.floor(hours / 24)} j`;
+  return hours < 48 ? `${hours} h` : `${Math.floor(hours / 24)} days`;
 }
 
 function freshnessLine(minutes: number | undefined): string {
-  const tip = 'Une réponse porte le plus sur un post de moins d’une heure.';
+  const tip = 'A reply works best on a post less than an hour old.';
   if (minutes === undefined) return `⏱ ${tip}`;
-  return minutes < 60 ? `⏱ Post de ${age(minutes)}. ${tip}` : `⏱ Post de ${age(minutes)} : une réponse portera moins. ${tip}`;
+  return minutes < 60 ? `⏱ Post is ${age(minutes)} old. ${tip}` : `⏱ Post is ${age(minutes)} old: a reply will reach fewer people. ${tip}`;
 }
 
 function quote(text: string, max = 600): string {
@@ -132,30 +158,30 @@ function quote(text: string, max = 600): string {
 }
 
 /**
- * A reply card: the post (and the one it answers), the advice, the freshness reminder and 3 variants,
- * each with its own copy button when it fits. Open replies get Répondu and Ignorer.
+ * A reply card (X): the post (and the one it answers), the advice, the freshness reminder and 3 variants, each with
+ * its own copy button when it fits. Open replies get Replied and Skip.
  */
 export function replyCard(reply: Reply, now: Date, copyMax: number): Card {
   const minutes = replyAgeMinutes(reply, now);
   const verdict =
     reply.worthReplying === null
-      ? '❔ Pas d’avis de Mistral.'
-      : `${reply.worthReplying ? '👍 Vaut une réponse' : '👎 Ne vaut pas une réponse'}${reply.reason ? ` : ${escapeHtml(reply.reason)}` : '.'}`;
+      ? '❔ No advice from Mistral.'
+      : `${reply.worthReplying ? '👍 Worth a reply' : '👎 Not worth a reply'}${reply.reason ? `: ${escapeHtml(reply.reason)}` : '.'}`;
   const lines = [
-    `<b>${ORIGIN_TITLES[reply.origin]}</b>${reply.author ? ` · @${escapeHtml(reply.author)}` : ''}${reply.postUrl ? ` · ${link(reply.postUrl, 'ouvrir sur X')}` : ''}`,
-    ...(reply.parentText ? [`↪️ En réponse à : <i>${quote(reply.parentText, 300)}</i>`] : []),
-    reply.postText ? `<blockquote>${quote(reply.postText)}</blockquote>` : '<i>Texte du post purgé (plus de 24 h).</i>',
+    `<b>${ORIGIN_TITLES[reply.origin]}</b>${reply.author ? ` · @${escapeHtml(reply.author)}` : ''}${reply.postUrl ? ` · ${link(reply.postUrl, 'open on X')}` : ''}`,
+    ...(reply.parentText ? [`↪️ In reply to: <i>${quote(reply.parentText, 300)}</i>`] : []),
+    reply.postText ? `<blockquote>${quote(reply.postText)}</blockquote>` : '<i>Post text purged (older than 24 h).</i>',
     verdict,
     freshnessLine(minutes),
   ];
   if (reply.worthReplying && reply.variants.length === 0) {
-    lines.push('Aucune variante n’a passé les contrôles (longueur, tiret cadratin, termes interdits).');
+    lines.push('No variant passed the checks (length, em dash, forbidden terms).');
   }
   reply.variants.forEach((variant, i) => {
     lines.push('', `<b>${i + 1}.</b> ${fitsCopyButton(variant, copyMax) ? escapeHtml(variant) : `<pre>${escapeHtml(variant)}</pre>`}`);
   });
   if (reply.status !== 'proposed') {
-    lines.push('', reply.status === 'replied' ? '✅ Répondu' : '➖ Ignoré');
+    lines.push('', reply.status === 'replied' ? '✅ Replied' : '➖ Skipped');
     return { text: lines.join('\n') };
   }
   const keyboard = new InlineKeyboard();
@@ -163,81 +189,86 @@ export function replyCard(reply: Reply, now: Date, copyMax: number): Card {
     if (fitsCopyButton(variant, copyMax)) keyboard.copyText(`📋 ${i + 1}`, variant);
   });
   if (reply.variants.some((v) => fitsCopyButton(v, copyMax))) keyboard.row();
-  keyboard.text({ text: '✅ Répondu', style: 'success' }, `r:${reply.id}:done`).text('➖ Ignorer', `r:${reply.id}:skip`);
+  keyboard.text({ text: '✅ Replied', style: 'success' }, `r:${reply.id}:done`).text('➖ Skip', `r:${reply.id}:skip`);
   return { text: lines.join('\n'), keyboard };
 }
 
-/** /start: one button per network; those not enabled in the config show as waiting, disabled. */
+/** /start: one button per network, two per row; those not enabled in the config show as off, disabled. */
 export function mainMenu(config: AppConfig): Card {
+  const enabled = new Set(enabledNetworks(config));
   const keyboard = new InlineKeyboard();
-  for (const [key, network] of Object.entries(config.networks) as Array<[keyof AppConfig['networks'], { enabled: boolean }]>) {
-    if (network.enabled) keyboard.text(NETWORK_NAMES[key], `net:${key}`);
-    else keyboard.disabled(`${NETWORK_NAMES[key]} · en attente`);
-    keyboard.row();
+  NETWORKS.forEach((network, i) => {
+    const name = NETWORK_SPECS[network].name;
+    if (enabled.has(network)) keyboard.text(name, `net:${network}`);
+    else keyboard.disabled(`${name} · off`);
+    if (i % 2 === 1) keyboard.row();
+  });
+  return { text: '<b>Social Copilot</b>\nPick a network.', keyboard };
+}
+
+export function networkMenu(network: Network, stats: DailyStats): Card {
+  const spec = NETWORK_SPECS[network];
+  const mine = stats.byNetwork[network] ?? { posted: 0, pending: 0, openAssets: 0 };
+  const keyboard = new InlineKeyboard().text(`📝 Pending drafts (${mine.pending})`, `pend:${network}`).row();
+  if (network === 'x') {
+    keyboard.text('💬 Who to reply to', 'targets').row().text('📥 Replies received', 'mentions').row();
   }
-  return { text: '<b>Copilote</b>\nChoisis un réseau.', keyboard };
+  keyboard
+    .text(`🎬 Asset requests (${mine.openAssets})`, `assets:${network}`)
+    .row()
+    .text('🤖 Talk to Mistral', `chat:${network}`)
+    .row()
+    .text('← Networks', 'home');
+  const replies = network === 'x' ? `, ${stats.replied} repl${stats.replied === 1 ? 'y' : 'ies'} made` : '';
+  return { text: `<b>${spec.name}</b>\nToday: ${mine.posted} posted${replies}.`, keyboard };
 }
 
-export function networkMenu(stats: DailyStats): Card {
-  const keyboard = new InlineKeyboard()
-    .text(`📝 Brouillons en attente (${stats.pendingDrafts})`, 'x:pending')
-    .row()
-    .text('💬 À qui répondre', 'x:targets')
-    .row()
-    .text('📥 Réponses reçues', 'x:mentions')
-    .row()
-    .text(`🎬 Demandes de visuels (${stats.openAssets})`, 'x:assets')
-    .row()
-    .text('🤖 Parler à Mistral', 'x:chat')
-    .row()
-    .text('← Réseaux', 'home');
-  return {
-    text: `<b>X</b>\nAujourd’hui : ${stats.posted} post(s) publié(s), ${stats.replied} réponse(s) faite(s).`,
-    keyboard,
-  };
-}
-
-function money(amount: number, unit: string): string {
-  return `${amount.toFixed(2).replace('.', ',')} ${unit}`;
+function money(amount: number, unit: '€' | '$'): string {
+  return `${unit}${amount.toFixed(2)}`;
 }
 
 export function statsText(stats: DailyStats): string {
   const { mistral, x } = stats.spend;
   return [
-    `<b>Aujourd’hui</b> (${stats.day})`,
-    `Posts publiés : ${stats.posted}`,
-    `Réponses faites : ${stats.replied}`,
-    `Brouillons en attente : ${stats.pendingDrafts}`,
-    `Visuels à produire : ${stats.openAssets}`,
+    `<b>Today</b> (${stats.day})`,
+    ...stats.networks.map((network) => {
+      const s = stats.byNetwork[network]!;
+      return `${NETWORK_SPECS[network].name}: ${s.posted} posted, ${s.pending} pending`;
+    }),
+    `Replies made on X: ${stats.replied}`,
+    `Assets to produce: ${stats.openAssets}`,
     '',
-    '<b>Dépenses TTC</b>',
-    `Mistral : ${money(mistral.spent, '€')} sur ${money(mistral.cap, '€')}`,
-    `X : ${money(x.spent, '$')} sur ${money(x.cap, '$')} (jour UTC)`,
+    '<b>Spend, VAT included</b>',
+    `Mistral: ${money(mistral.spent, '€')} of ${money(mistral.cap, '€')}`,
+    `X: ${money(x.spent, '$')} of ${money(x.cap, '$')} (UTC day)`,
   ].join('\n');
 }
 
 export const HELP_TEXT = [
-  '<b>Commandes</b>',
-  '/start : menu des réseaux',
-  '/stats : publications, réponses et dépenses du jour',
-  '/reset : efface l’historique de « Parler à Mistral »',
-  '/avis &lt;texte&gt; : avis « vaut une réponse » et 3 variantes sur un post collé sans lien',
-  '/help : cette aide',
+  '<b>Commands</b>',
+  '/start: pick a network',
+  '/stats: posts, replies and spend of the day',
+  '/reset: forget the conversation with Mistral',
+  '/advice &lt;text&gt;: "worth a reply" advice and 3 replies for a post pasted without a link',
+  '/help: this help',
   '',
-  '<b>Sur une carte de brouillon</b>',
-  'Copier, puis Posté une fois publié à la main. Modifier : réponds à la carte avec ta consigne. Non : motif facultatif, puis nouveau sujet.',
+  '<b>On a draft card</b>',
+  'Copy, then Posted once you have published it by hand. Edit: reply to the card with an instruction. No: optional reason, then a new topic.',
   '',
-  '<b>Messages libres</b>',
-  'Tout message part à Mistral, avec la voix du compte et le brouillon en cours. Un lien de post X déclenche l’avis et 3 variantes ; les mots autour du lien servent de consigne.',
+  '<b>Free messages</b>',
+  'Any message goes to Mistral, with the account voice and the draft in progress of the network you last opened. A link to an X post gets the advice and 3 replies; words around the link are taken as an instruction.',
   '',
-  'Le service ne publie jamais rien : tout se poste à la main.',
+  'The service never publishes anything: you post by hand.',
 ].join('\n');
 
-export const CHAT_HINT =
-  'Écris-moi directement : tout message libre part à Mistral, avec la voix du compte et le brouillon en cours.\n' +
-  'Colle un lien de post X pour un avis « vaut une réponse » et 3 variantes.\n/reset efface l’historique.';
+export function chatHint(network: Network): string {
+  return (
+    `Write to me directly: any free message goes to Mistral, with the account voice and the ${NETWORK_SPECS[network].name} draft in progress.\n` +
+    'Paste a link to an X post for "worth a reply" advice and 3 replies.\n/reset forgets the conversation.'
+  );
+}
 
-/** Telegram refuses messages over 4096 characters: long answers are split on line breaks. */
+/** Splits a long answer on line breaks, under Telegram's message limit. */
 export function splitMessage(text: string, max = 4000): string[] {
   const parts: string[] = [];
   let rest = text;

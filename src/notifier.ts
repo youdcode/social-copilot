@@ -1,6 +1,7 @@
 import type { DraftJson } from './generation/draft.ts';
+import { NETWORK_SPECS, type Network } from './networks.ts';
 
-export type ProposedDraft = DraftJson & { id?: number; weightedLength: number; triggerUrl: string };
+export type ProposedDraft = DraftJson & { id?: number; network: Network; length: number; triggerUrl: string };
 
 /** Where drafts, alerts and notices go: the Telegram bot when the service runs, the console for the dry run. */
 export type Notifier = {
@@ -11,18 +12,29 @@ export type Notifier = {
 };
 
 export function formatDraftCard(draft: ProposedDraft): string {
+  const spec = NETWORK_SPECS[draft.network];
   const asset = draft.asset_request
-    ? `Matière : ${draft.asset_request.type}, ${draft.asset_request.duration_s} s. ${draft.asset_request.brief}`
-    : 'Matière : aucune';
+    ? `Asset: ${draft.asset_request.type}, ${draft.asset_request.duration_s} s. ${draft.asset_request.brief}`
+    : 'Asset: none';
+  const script = draft.script
+    ? [
+        `Script (${draft.script.duration_s} s), hook: ${draft.script.hook}`,
+        ...draft.script.shots.map(
+          (shot, i) => `  ${i + 1}. ${shot.visual} | says: ${shot.voiceover} | on screen: ${shot.on_screen_text}`,
+        ),
+      ]
+    : [];
   return [
-    `Brouillon${draft.id ? ` n° ${draft.id}` : ''} · pilier ${draft.pillar} · ${draft.weightedLength}/280`,
+    `${spec.name} draft${draft.id ? ` #${draft.id}` : ''} · pillar ${draft.pillar} · ${draft.length}/${spec.maxLength}`,
+    ...(draft.title ? ['', `Title: ${draft.title}`] : []),
     '',
-    draft.tweet,
+    draft.text,
+    ...(script.length > 0 ? ['', ...script] : []),
     '',
-    `Pourquoi : ${draft.why_it_matters}`,
-    `Sujet : ${draft.topic}`,
-    `Déclencheur : ${draft.triggerUrl}`,
-    'Sources :',
+    `Why: ${draft.why_it_matters}`,
+    `Topic: ${draft.topic}`,
+    `Trigger: ${draft.triggerUrl}`,
+    'Sources:',
     ...draft.sources.map((s) => `  ${s}`),
     asset,
   ].join('\n');
@@ -33,7 +45,7 @@ export const consoleNotifier: Notifier = {
     console.log(`\n${formatDraftCard(draft)}\n`);
   },
   alert(message) {
-    console.error(`[alerte] ${message}`);
+    console.error(`[alert] ${message}`);
   },
   notice(message) {
     console.log(message);

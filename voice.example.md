@@ -1,7 +1,7 @@
 <!--
-Exemple de voix, entièrement fictif. Copie ce fichier en voice.md (hors git) et réécris-le pour ton compte.
-Tout le texte ci-dessous est envoyé tel quel à Mistral, à chaque brouillon, réécriture et conversation :
-écris-le en anglais, à la manière d'une consigne. Ne mets ici ni ton nom, ni ta ville, ni ton entreprise.
+A fully fictional example. Copy this file to voice.md (kept out of git) and rewrite it for your account.
+Everything outside this comment is sent to Mistral as is, with every draft, rewrite and conversation:
+write it in English, as an instruction. Put neither your name, nor your city, nor your company here.
 -->
 
 A curious engineer who reads the changelog before the press release.

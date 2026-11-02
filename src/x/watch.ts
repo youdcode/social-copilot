@@ -38,7 +38,7 @@ export async function resolveWatchedAccounts(
   const missing = config.x.watchedAccounts.filter((h) => !known.has(h.toLowerCase()));
   if (missing.length === 0) return { resolved: [], notFound: [] };
   if (affordableXResources(db, config, 'user', now) < missing.length) {
-    throw new BudgetExceededError('x', `Budget X du jour insuffisant pour résoudre ${missing.length} comptes.`);
+    throw new BudgetExceededError('x', `Today's X budget cannot pay for resolving ${missing.length} accounts.`);
   }
   const { users, notFound } = await x.lookupUsers(missing);
   recordXReads(db, config, 'user', users.map((u) => u.id), now);

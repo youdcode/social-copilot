@@ -14,7 +14,7 @@ function telegramMessage(error: unknown): string {
 await runCli(async () => {
   const telegram = requireSecrets(['TELEGRAM_BOT_TOKEN', 'TELEGRAM_ALLOWED_CHAT_ID']);
   if (!/^-?\d+$/.test(telegram.TELEGRAM_ALLOWED_CHAT_ID)) {
-    throw new Error('TELEGRAM_ALLOWED_CHAT_ID doit être un nombre : lance npm run telegram:chat-id pour le trouver.');
+    throw new Error('TELEGRAM_ALLOWED_CHAT_ID must be a number: run npm run telegram:chat-id to find it.');
   }
   const chatId = Number(telegram.TELEGRAM_ALLOWED_CHAT_ID);
 
@@ -44,7 +44,7 @@ await runCli(async () => {
     service.stop();
     await bot.stop().catch(() => {});
     base.release();
-    deps.log('Service arrêté.');
+    deps.log('Service stopped.');
     process.exit(code);
   };
   process.on('SIGINT', () => void shutdown(0));
@@ -54,10 +54,10 @@ await runCli(async () => {
   void bot
     .start({
       allowed_updates: [...allowedUpdates],
-      onStart: (info) => deps.log(`Service démarré. Bot @${info.username} à l'écoute du chat autorisé.`),
+      onStart: (info) => deps.log(`Service started. Bot @${info.username} listening to the allowed chat.`),
     })
     .catch(async (error: unknown) => {
-      deps.log(`Bot arrêté : ${telegramMessage(error)}`);
+      deps.log(`Bot stopped: ${telegramMessage(error)}`);
       await shutdown(1);
     });
 });

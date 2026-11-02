@@ -8,7 +8,7 @@ import type { JsonResult, MistralGateway } from '../src/mistral/gateway.ts';
 export function testConfig(change: (config: any) => void = () => {}): AppConfig {
   const raw = JSON.parse(readFileSync(DEFAULT_CONFIG_PATH, 'utf8'));
   change(raw);
-  return parseConfig(raw, '/tmp/copilote-test');
+  return parseConfig(raw, '/tmp/social-copilot-test');
 }
 
 export function testDb(): Db {
@@ -53,7 +53,7 @@ export function insertDraft(db: Db, overrides: Record<string, unknown> = {}): nu
     slot_at: '2026-10-01T07:00:00.000Z',
     pillar: 'ai',
     topic: 'Lab releases Model 5',
-    tweet: 'Lab released Model 5 today. Same quality, half the price.',
+    text: 'Lab released Model 5 today. Same quality, half the price.',
     why_it_matters: 'Cheaper inference for small teams.',
     sources: JSON.stringify(['https://lab.test/model-5']),
     asset_request: null,

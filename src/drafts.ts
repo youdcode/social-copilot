@@ -1,20 +1,22 @@
-import twitterText from 'twitter-text';
 import type { AppConfig } from './config.ts';
 import type { Db } from './db/database.ts';
-import type { DraftJson, Pillar } from './generation/draft.ts';
+import type { AssetRequest, DraftContent, Pillar, VideoScript } from './generation/draft.ts';
+import { isNetwork, NETWORK_SPECS, type Network } from './networks.ts';
 
 export type DraftStatus = 'proposed' | 'refused' | 'edited' | 'posted';
-export type AssetRequest = NonNullable<DraftJson['asset_request']>;
 
 /** A stored draft, as the bot shows it. */
 export type Draft = {
   id: number;
-  network: string;
+  network: Network;
   slotAt: string;
   pillar: Pillar;
   topic: string;
-  tweet: string;
-  weightedLength: number;
+  text: string;
+  /** Length of the text as its network counts it. */
+  length: number;
+  title: string | null;
+  script: VideoScript | null;
   whyItMatters: string;
   sources: string[];
   assetRequest: AssetRequest | null;
@@ -32,7 +34,9 @@ type DraftRow = {
   slot_at: string;
   pillar: Pillar;
   topic: string;
-  tweet: string;
+  text: string;
+  title: string | null;
+  script: string | null;
   why_it_matters: string;
   sources: string;
   asset_request: string | null;
@@ -45,14 +49,17 @@ type DraftRow = {
 };
 
 function toDraft(row: DraftRow): Draft {
+  const network = isNetwork(row.network) ? row.network : 'x';
   return {
     id: row.id,
-    network: row.network,
+    network,
     slotAt: row.slot_at,
     pillar: row.pillar,
     topic: row.topic,
-    tweet: row.tweet,
-    weightedLength: twitterText.parseTweet(row.tweet).weightedLength,
+    text: row.text,
+    length: NETWORK_SPECS[network].measure(row.text),
+    title: row.title,
+    script: row.script ? (JSON.parse(row.script) as VideoScript) : null,
     whyItMatters: row.why_it_matters,
     sources: JSON.parse(row.sources) as string[],
     assetRequest: row.asset_request ? (JSON.parse(row.asset_request) as AssetRequest) : null,
@@ -72,9 +79,12 @@ export function getDraft(db: Db, id: number): Draft | undefined {
   return row && toDraft(row);
 }
 
-/** Drafts still waiting for a decision, oldest first. */
-export function pendingDrafts(db: Db): Draft[] {
-  return (db.prepare(`SELECT * FROM drafts WHERE ${PENDING} ORDER BY id`).all() as DraftRow[]).map(toDraft);
+/** Drafts still waiting for a decision, oldest first: of one network, or of all. */
+export function pendingDrafts(db: Db, network?: Network): Draft[] {
+  const rows = network
+    ? db.prepare(`SELECT * FROM drafts WHERE ${PENDING} AND network = ? ORDER BY id`).all(network)
+    : db.prepare(`SELECT * FROM drafts WHERE ${PENDING} ORDER BY id`).all();
+  return (rows as DraftRow[]).map(toDraft);
 }
 
 /** The draft whose Telegram card has this message id. */
@@ -89,16 +99,17 @@ export function setDraftMessage(db: Db, id: number, messageId: number): void {
 
 function excludeTopic(db: Db, config: AppConfig, draft: Draft, reason: 'posted' | 'refused', now: Date): void {
   const until = new Date(now.getTime() + config.generation.exclusionDays * 24 * 3_600_000);
-  db.prepare('INSERT INTO excluded_topics (topic, reason, draft_id, excluded_until) VALUES (?, ?, ?, ?)').run(
+  db.prepare('INSERT INTO excluded_topics (topic, reason, draft_id, excluded_until, network) VALUES (?, ?, ?, ?, ?)').run(
     draft.topic,
     reason,
     draft.id,
     until.toISOString(),
+    draft.network,
   );
 }
 
 /**
- * Moves a pending draft to posted or refused, and excludes its topic for exclusionDays.
+ * Moves a pending draft to posted or refused, and excludes its topic on its network for exclusionDays.
  * Returns false when the draft was no longer pending: a click Telegram sends twice does nothing the second time.
  */
 function decide(db: Db, config: AppConfig, id: number, status: 'posted' | 'refused', now: Date): boolean {
@@ -132,10 +143,11 @@ export function setRefusalReason(db: Db, id: number, reason: string, now: Date):
 }
 
 const POSTED_URL = /https?:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/[A-Za-z0-9_]{1,15}\/status\/\d+/i;
+const ANY_URL = /https?:\/\/[^\s<>"]+/i;
 
-/** Stores the link of the published post, if the text holds one. */
+/** Stores the link of the published post, if the text holds one: an X link first, else any web link. */
 export function setPostedUrl(db: Db, id: number, text: string, now: Date): string | undefined {
-  const url = POSTED_URL.exec(text)?.[0];
+  const url = (POSTED_URL.exec(text) ?? ANY_URL.exec(text))?.[0];
   if (!url) return undefined;
   db.prepare("UPDATE drafts SET posted_url = ?, updated_at = ? WHERE id = ? AND status = 'posted'").run(
     url,
@@ -145,25 +157,21 @@ export function setPostedUrl(db: Db, id: number, text: string, now: Date): strin
   return url;
 }
 
-/** Replaces the text of a pending draft after "Modifier". */
-export function replaceTweet(db: Db, id: number, tweet: string, now: Date): boolean {
+/** Replaces the written part of a pending draft after "Edit". */
+export function replaceContent(db: Db, id: number, content: DraftContent, now: Date): boolean {
   return (
     db
-      .prepare(`UPDATE drafts SET tweet = ?, status = 'edited', updated_at = ? WHERE id = ? AND ${PENDING}`)
-      .run(tweet, now.toISOString(), id).changes === 1
+      .prepare(`UPDATE drafts SET text = ?, title = ?, script = ?, status = 'edited', updated_at = ? WHERE id = ? AND ${PENDING}`)
+      .run(content.text, content.title, content.script ? JSON.stringify(content.script) : null, now.toISOString(), id)
+      .changes === 1
   );
 }
 
-/** Asset requests of drafts not refused, still to produce, oldest first. */
-export function openAssetRequests(db: Db): Draft[] {
-  return (
-    db
-      .prepare(
-        `SELECT * FROM drafts WHERE asset_request IS NOT NULL AND asset_ready_at IS NULL AND status != 'refused'
-         ORDER BY id`,
-      )
-      .all() as DraftRow[]
-  ).map(toDraft);
+/** Asset requests of drafts not refused, still to produce, oldest first: of one network, or of all. */
+export function openAssetRequests(db: Db, network?: Network): Draft[] {
+  const sql = `SELECT * FROM drafts WHERE asset_request IS NOT NULL AND asset_ready_at IS NULL AND status != 'refused'
+    ${network ? 'AND network = ?' : ''} ORDER BY id`;
+  return ((network ? db.prepare(sql).all(network) : db.prepare(sql).all()) as DraftRow[]).map(toDraft);
 }
 
 export function markAssetReady(db: Db, id: number, now: Date): boolean {

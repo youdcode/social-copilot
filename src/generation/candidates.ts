@@ -1,4 +1,5 @@
 import type { Db } from '../db/database.ts';
+import type { Network } from '../networks.ts';
 import type { XPublicMetrics } from '../x/client.ts';
 
 export type CandidateKind = 'x_post' | 'rss' | 'hn';
@@ -46,19 +47,22 @@ function host(url: string): string {
   }
 }
 
-/** Items already grouped into a recent draft: they never trigger again. */
-export function usedItemRefs(db: Db, since: Date): Set<string> {
+/** Items already grouped into a recent draft for this network: they never trigger again there. */
+export function usedItemRefs(db: Db, since: Date, network: Network): Set<string> {
   const refs = db
-    .prepare('SELECT value FROM drafts, json_each(drafts.topic_items) WHERE drafts.created_at >= ?')
+    .prepare('SELECT value FROM drafts, json_each(drafts.topic_items) WHERE drafts.created_at >= ? AND drafts.network = ?')
     .pluck()
-    .all(since.toISOString()) as string[];
+    .all(since.toISOString(), network) as string[];
   return new Set(refs);
 }
 
-/** Every item published within maxAgeHours whose text is still stored and that no recent draft used. */
-export function gatherCandidates(db: Db, now: Date, maxAgeHours: number): Candidate[] {
+/**
+ * Every item published within maxAgeHours whose text is still stored. With a network, items a recent draft of that
+ * network already used are left out; the same news can still go out on another network.
+ */
+export function gatherCandidates(db: Db, now: Date, maxAgeHours: number, network?: Network): Candidate[] {
   const cutoff = new Date(now.getTime() - maxAgeHours * 3_600_000);
-  const used = usedItemRefs(db, new Date(now.getTime() - 7 * 24 * 3_600_000));
+  const used = network ? usedItemRefs(db, new Date(now.getTime() - 7 * 24 * 3_600_000), network) : new Set<string>();
 
   const posts = db
     .prepare(

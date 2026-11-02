@@ -25,7 +25,7 @@ export class BudgetExceededError extends Error {
 /** Mistral cost in euros, VAT included. Connector tokens count as input tokens unless the config says otherwise. */
 export function mistralCostEur(usage: MistralUsage, mistral: AppConfig['mistral']): number {
   const price = mistral.pricesEur.models[usage.model];
-  if (!price) throw new Error(`Pas de tarif pour le modèle ${usage.model} dans la config.`);
+  if (!price) throw new Error(`No price for model ${usage.model} in the config.`);
   const inputTokens = usage.promptTokens + (mistral.countConnectorTokensAsInput ? usage.connectorTokens : 0);
   const perCall =
     mistral.webSearchTool === 'web_search_premium'
@@ -133,7 +133,7 @@ export function assertBudget(db: Db, config: AppConfig, service: Service, now: D
     const cap = service === 'x' ? `${config.x.dailyCapUsd} $` : `${config.mistral.dailyCapEur} €`;
     throw new BudgetExceededError(
       service,
-      `Plafond journalier ${service === 'x' ? 'X' : 'Mistral'} atteint (${cap} TTC) : arrêt jusqu'au jour suivant.`,
+      `Daily ${service === 'x' ? 'X' : 'Mistral'} cap reached (${cap} incl. VAT): paid calls stop until the next day.`,
     );
   }
 }

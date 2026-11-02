@@ -9,7 +9,7 @@ import {
   pendingDrafts,
   promptFor,
   refuseDraft,
-  replaceTweet,
+  replaceContent,
   savePrompt,
   setDraftMessage,
   setPostedUrl,
@@ -22,7 +22,7 @@ const now = new Date('2026-10-01T09:00:00Z');
 const config = testConfig();
 
 describe('draft decisions', () => {
-  test('Posté marks the draft once, dates it and excludes its topic', () => {
+  test('Posted marks the draft once, dates it and excludes its topic', () => {
     const db = testDb();
     const id = insertDraft(db);
     assert.equal(markPosted(db, config, id, now), true);
@@ -34,7 +34,7 @@ describe('draft decisions', () => {
     assert.equal(db.prepare('SELECT count(*) FROM excluded_topics').pluck().get(), 1);
   });
 
-  test('Non refuses once: a replayed click changes nothing', () => {
+  test('No refuses once: a replayed click changes nothing', () => {
     const db = testDb();
     const id = insertDraft(db);
     assert.equal(refuseDraft(db, config, id, now), true);
@@ -48,10 +48,10 @@ describe('draft decisions', () => {
   test('a refusal reason is kept only on a refused draft', () => {
     const db = testDb();
     const id = insertDraft(db);
-    assert.equal(setRefusalReason(db, id, 'déjà vu', now), false);
+    assert.equal(setRefusalReason(db, id, 'seen it', now), false);
     refuseDraft(db, config, id, now);
-    assert.equal(setRefusalReason(db, id, '  déjà vu  ', now), true);
-    assert.equal(getDraft(db, id)!.refusalReason, 'déjà vu');
+    assert.equal(setRefusalReason(db, id, '  seen it  ', now), true);
+    assert.equal(getDraft(db, id)!.refusalReason, 'seen it');
   });
 
   test('the posted link is read from the message, on a posted draft only', () => {
@@ -60,20 +60,20 @@ describe('draft decisions', () => {
     markPosted(db, config, id, now);
     assert.equal(setPostedUrl(db, id, 'rien ici', now), undefined);
     assert.equal(
-      setPostedUrl(db, id, 'voilà https://x.com/someone/status/123?s=20 merci', now),
+      setPostedUrl(db, id, 'here https://x.com/someone/status/123?s=20 thanks', now),
       'https://x.com/someone/status/123',
     );
     assert.equal(getDraft(db, id)!.postedUrl, 'https://x.com/someone/status/123');
   });
 
-  test('Modifier replaces the text of a pending draft only', () => {
+  test('Edit replaces the written part of a pending draft only', () => {
     const db = testDb();
     const id = insertDraft(db);
-    assert.equal(replaceTweet(db, id, 'Shorter.', now), true);
+    assert.equal(replaceContent(db, id, { text: 'Shorter.', title: null, script: null }, now), true);
     assert.equal(getDraft(db, id)!.status, 'edited');
     assert.deepEqual(pendingDrafts(db).map((d) => d.id), [id]);
     refuseDraft(db, config, id, now);
-    assert.equal(replaceTweet(db, id, 'Again.', now), false);
+    assert.equal(replaceContent(db, id, { text: 'Again.', title: null, script: null }, now), false);
     assert.equal(pendingDrafts(db).length, 0);
   });
 });
@@ -103,9 +103,9 @@ describe('cards, prompts and assets', () => {
     assert.equal(openAssetRequests(db).length, 0);
   });
 
-  test('counts the tweet length as X does', () => {
+  test('counts the length as X does', () => {
     const db = testDb();
-    const id = insertDraft(db, { tweet: 'See https://example.com/a/very/long/path/that/x/shortens/anyway' });
-    assert.equal(getDraft(db, id)!.weightedLength, 4 + 23);
+    const id = insertDraft(db, { text: 'See https://example.com/a/very/long/path/that/x/shortens/anyway' });
+    assert.equal(getDraft(db, id)!.length, 4 + 23);
   });
 });

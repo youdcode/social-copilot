@@ -79,7 +79,7 @@ describe('adviseOnReplies', () => {
         reply_advice: [
           advice([
             { id: worth, worth: true, variants: ['Half the price is the real news.', tooLong, 'Cheaper — finally.', 'Ask Acme.', 'Benchmarks next?'] },
-            { id: notWorth, worth: false, reason: 'rien à ajouter' },
+            { id: notWorth, worth: false, reason: 'nothing to add' },
           ]),
         ],
       },
@@ -89,7 +89,7 @@ describe('adviseOnReplies', () => {
     assert.deepEqual(getReply(d.db, worth)!.variants, ['Half the price is the real news.', 'Benchmarks next?']);
     assert.equal(getReply(d.db, worth)!.worthReplying, true);
     assert.equal(getReply(d.db, notWorth)!.worthReplying, false);
-    assert.equal(getReply(d.db, notWorth)!.reason, 'rien à ajouter');
+    assert.equal(getReply(d.db, notWorth)!.reason, 'nothing to add');
     assert.equal(scripted.jsonCalls.length, 1);
   });
 

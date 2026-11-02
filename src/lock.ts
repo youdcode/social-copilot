@@ -45,11 +45,11 @@ export function acquireLock(file: string): { release(): void } {
       const holder = readPid(file);
       if (holder !== undefined && isAlive(holder)) {
         throw new LockError(
-          `Une autre instance tourne déjà (PID ${holder}). Arrête-la avant d'en lancer une nouvelle.`,
+          `Another instance is already running (PID ${holder}). Stop it before starting a new one.`,
         );
       }
       unlinkSync(file);
     }
   }
-  throw new LockError(`Impossible de prendre le verrou ${file}.`);
+  throw new LockError(`Cannot take the lock ${file}.`);
 }

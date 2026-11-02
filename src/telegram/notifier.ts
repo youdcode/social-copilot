@@ -5,8 +5,12 @@ import { getDraft, setDraftMessage } from '../drafts.ts';
 import type { Notifier } from '../notifier.ts';
 import { draftCard, type Card } from './format.ts';
 
-/** Sends a card in HTML, link previews off, optionally as a reply to another message. */
-export function sendCard(api: Api, chatId: number, card: Card, replyTo?: number) {
+/**
+ * Sends a card in HTML, link previews off, optionally as a reply to another message. Parts too long to fit go first,
+ * as messages of their own.
+ */
+export async function sendCard(api: Api, chatId: number, card: Card, replyTo?: number) {
+  for (const part of card.before ?? []) await api.sendMessage(chatId, part, { parse_mode: 'HTML' });
   return api.sendMessage(chatId, card.text, {
     parse_mode: 'HTML',
     link_preview_options: { is_disabled: true },
@@ -33,7 +37,7 @@ export async function sendDraftCard(
 
 /**
  * Drafts and alerts go to the one allowed chat, with Telegram's native notification.
- * A failed send is logged and never stops the service: the draft stays listed under "Brouillons en attente".
+ * A failed send is logged and never stops the service: the draft stays listed under "Pending drafts".
  */
 export function createTelegramNotifier(
   api: Api,
@@ -46,20 +50,20 @@ export function createTelegramNotifier(
     try {
       await send();
     } catch (error) {
-      log(`Envoi Telegram impossible (${what}) : ${(error as Error).message}`);
+      log(`Telegram send failed (${what}): ${(error as Error).message}`);
     }
   };
   return {
     async draftProposed(draft) {
       if (draft.id === undefined) return;
       const id = draft.id;
-      await safely(`brouillon n° ${id}`, () => sendDraftCard(api, chatId, db, config, id));
+      await safely(`draft #${id}`, () => sendDraftCard(api, chatId, db, config, id));
     },
     async alert(message) {
-      await safely('alerte', () => api.sendMessage(chatId, `⚠️ ${message}`));
+      await safely('alert', () => api.sendMessage(chatId, `⚠️ ${message}`));
     },
     async notice(message) {
-      await safely('information', () => api.sendMessage(chatId, message));
+      await safely('notice', () => api.sendMessage(chatId, message));
     },
   };
 }

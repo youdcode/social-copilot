@@ -24,6 +24,6 @@ describe('loadVoice', () => {
 
   test('refuses a missing file, or one with only comments', () => {
     assert.throws(() => loadVoice('/nonexistent/voice.md'), VoiceError);
-    assert.throws(() => loadVoice(voiceFile('<!-- only a note -->')), /vide/);
+    assert.throws(() => loadVoice(voiceFile('<!-- only a note -->')), /empty/);
   });
 });

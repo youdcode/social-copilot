@@ -25,7 +25,7 @@ describe('privateChatsFromUpdates', () => {
 describe('explainTelegramError', () => {
   test('points to the token on 401 and to a second instance on 409', () => {
     assert.match(explainTelegramError(401), /TELEGRAM_BOT_TOKEN/);
-    assert.match(explainTelegramError(409), /autre instance/);
-    assert.equal(explainTelegramError(500, 'Internal'), 'Erreur Telegram 500 : Internal');
+    assert.match(explainTelegramError(409), /Another instance/);
+    assert.equal(explainTelegramError(500, 'Internal'), 'Telegram error 500: Internal');
   });
 });

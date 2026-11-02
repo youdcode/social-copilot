@@ -22,7 +22,7 @@ function seed(db: GeneratorDeps['db']) {
 const goodDraft = {
   topic: 'Lab releases Model 5',
   pillar: 'ai',
-  tweet: 'Lab released Model 5 today. Same quality, half the price.',
+  text: 'Lab released Model 5 today. Same quality, half the price.',
   why_it_matters: 'Cheaper inference for small teams.',
   sources: ['https://lab.test/model-5', 'https://x.com/lab/status/9001'],
   asset_request: null,
@@ -80,7 +80,7 @@ function deps(gateway: MistralGateway, change?: (c: any) => void) {
 describe('generateDraft', () => {
   test('groups, ranks, writes, validates, stores and notifies', async () => {
     const { d, proposed } = deps(fakeGateway([goodDraft]));
-    const outcome = await generateDraft(d, slot, { save: true });
+    const outcome = await generateDraft(d, 'x', slot, { save: true });
     assert.equal(outcome.status, 'drafted');
     assert.equal(proposed.length, 1);
     const row = d.db.prepare('SELECT status, trigger_ref, topic_items FROM drafts').get() as {
@@ -96,7 +96,7 @@ describe('generateDraft', () => {
 
   test('a dry run stores and sends nothing', async () => {
     const { d, proposed } = deps(fakeGateway([goodDraft]));
-    const outcome = await generateDraft(d, slot, { save: false });
+    const outcome = await generateDraft(d, 'x', slot, { save: false });
     assert.equal(outcome.status, 'drafted');
     assert.equal(proposed.length, 0);
     assert.equal(d.db.prepare('SELECT count(*) FROM drafts').pluck().get(), 0);
@@ -105,7 +105,7 @@ describe('generateDraft', () => {
   test('retries with the reasons, then alerts after the last attempt', async () => {
     const gateway = fakeGateway([{ ...goodDraft, sources: ['https://made-up.test'] }]);
     const { d, alerts } = deps(gateway);
-    const outcome = await generateDraft(d, slot, { save: true });
+    const outcome = await generateDraft(d, 'x', slot, { save: true });
     assert.equal(outcome.status, 'failed');
     assert.equal(gateway.searches, 3);
     assert.equal(outcome.attempts.length, 3);
@@ -113,32 +113,32 @@ describe('generateDraft', () => {
   });
 
   test('succeeds on a later attempt', async () => {
-    const gateway = fakeGateway([{ ...goodDraft, tweet: 'Too long '.repeat(40) }, goodDraft]);
+    const gateway = fakeGateway([{ ...goodDraft, text: 'Too long '.repeat(40) }, goodDraft]);
     const { d } = deps(gateway);
-    const outcome = await generateDraft(d, slot, { save: true });
+    const outcome = await generateDraft(d, 'x', slot, { save: true });
     assert.equal(outcome.status, 'drafted');
     assert.equal(gateway.searches, 2);
   });
 
   test('skips the slot while a draft is pending', async () => {
     const { d } = deps(fakeGateway([goodDraft]));
-    await generateDraft(d, slot, { save: true });
-    const outcome = await generateDraft(d, new Date('2026-10-01T11:00:00Z'), { save: true });
+    await generateDraft(d, 'x', slot, { save: true });
+    const outcome = await generateDraft(d, 'x', new Date('2026-10-01T11:00:00Z'), { save: true });
     assert.equal(outcome.status, 'pending_draft');
   });
 
   test('never reuses items already drafted', async () => {
     const { d } = deps(fakeGateway([goodDraft]));
-    await generateDraft(d, slot, { save: true });
+    await generateDraft(d, 'x', slot, { save: true });
     d.db.prepare("UPDATE drafts SET status = 'posted'").run();
-    const outcome = await generateDraft(d, new Date('2026-10-01T11:00:00Z'), { save: true });
+    const outcome = await generateDraft(d, 'x', new Date('2026-10-01T11:00:00Z'), { save: true });
     assert.equal(outcome.status, 'no_topic');
   });
 
   test('stops at the Mistral cap', async () => {
     const { d } = deps(fakeGateway([goodDraft]), (c) => (c.mistral.dailyCapEur = 0.0001));
     d.db.prepare("INSERT INTO spend (service, day, cost_incl_vat) VALUES ('mistral', '2026-10-01', 1)").run();
-    const outcome = await generateDraft(d, slot, { save: true });
+    const outcome = await generateDraft(d, 'x', slot, { save: true });
     assert.equal(outcome.status, 'budget');
   });
 
@@ -157,7 +157,7 @@ describe('generateDraft', () => {
       },
     };
     const { d } = deps(gateway);
-    const outcome = await generateDraft(d, slot, { save: false });
+    const outcome = await generateDraft(d, 'x', slot, { save: false });
     assert.equal(outcome.status, 'drafted');
     assert.deepEqual(outcome.attempts.map((a) => a.mode), ['two_step']);
   });
@@ -175,7 +175,7 @@ describe('generateDraft', () => {
       completeJson: async (o) => (o.jsonSchema.name === 'topics' ? base.completeJson(o) : { text: JSON.stringify(goodDraft), usage }),
     };
     const { d } = deps(gateway);
-    const outcome = await generateDraft(d, slot, { save: false });
+    const outcome = await generateDraft(d, 'x', slot, { save: false });
     assert.equal(outcome.status, 'drafted');
     assert.deepEqual(modes, ['single', 'research']);
     assert.match(outcome.attempts[0]!.errors[0]!, /did not run a web search/);
@@ -193,8 +193,64 @@ describe('generateDraft', () => {
       },
     };
     const { d } = deps(gateway, (c) => (c.mistral.draftMode = 'two_step'));
-    const outcome = await generateDraft(d, slot, { save: false });
+    const outcome = await generateDraft(d, 'x', slot, { save: false });
     assert.equal(outcome.status, 'drafted');
     assert.equal(jsonCalls, 2);
+  });
+});
+
+describe('several networks', () => {
+  test('networks drafting together share one grouping, and the same news can go out on each', async () => {
+    const topicCalls: string[] = [];
+    const base = fakeGateway([goodDraft]);
+    const gateway: MistralGateway = {
+      ...base,
+      completeJson: async (o) => {
+        topicCalls.push(o.jsonSchema.name);
+        return base.completeJson(o);
+      },
+      searchAndAnswer: (o) => base.searchAndAnswer(o),
+    };
+    const { d, proposed } = deps(gateway);
+    const cache = {};
+    assert.equal((await generateDraft(d, 'x', slot, { save: true, clusterCache: cache })).status, 'drafted');
+    assert.equal((await generateDraft(d, 'linkedin', slot, { save: true, clusterCache: cache })).status, 'drafted');
+    assert.deepEqual(topicCalls, ['topics']);
+    assert.deepEqual(proposed.map((p) => p.network), ['x', 'linkedin']);
+    assert.deepEqual(d.db.prepare('SELECT network FROM drafts ORDER BY id').pluck().all(), ['x', 'linkedin']);
+  });
+
+  test('a topic refused on X stays open on LinkedIn', async () => {
+    const { d } = deps(fakeGateway([goodDraft]));
+    d.db
+      .prepare("INSERT INTO excluded_topics (topic, reason, excluded_until, network) VALUES (?, 'refused', '2026-10-08T00:00:00Z', 'x')")
+      .run('Lab releases Model 5');
+    assert.equal((await generateDraft(d, 'x', slot, { save: true })).status, 'no_topic');
+    assert.equal((await generateDraft(d, 'linkedin', slot, { save: true })).status, 'drafted');
+  });
+
+  test('writes in the format of the network: the prompt and the JSON schema change', async () => {
+    const searches: Array<{ instructions: string; schema?: string }> = [];
+    const short = {
+      ...goodDraft,
+      title: 'Model 5 at half the price',
+      script: { hook: 'Half the price?', shots: [{ visual: 'Pricing page', voiceover: 'Model 5 is out.', on_screen_text: '-50%' }], duration_s: 30 },
+    };
+    const base = fakeGateway([short]);
+    const gateway: MistralGateway = {
+      ...base,
+      completeJson: (o) => base.completeJson(o),
+      searchAndAnswer: async (o) => {
+        searches.push({ instructions: o.instructions, ...(o.jsonSchema ? { schema: o.jsonSchema.name } : {}) });
+        return base.searchAndAnswer(o);
+      },
+    };
+    const { d, proposed } = deps(gateway);
+    assert.equal((await generateDraft(d, 'youtube', slot, { save: true })).status, 'drafted');
+    assert.equal(searches[0]!.schema, 'draft_youtube');
+    assert.match(searches[0]!.instructions, /short videos for an anonymous YouTube Shorts account/);
+    assert.equal(proposed[0]!.title, 'Model 5 at half the price');
+    const row = d.db.prepare('SELECT title, script FROM drafts').get() as { title: string; script: string };
+    assert.equal(JSON.parse(row.script).duration_s, 30);
   });
 });

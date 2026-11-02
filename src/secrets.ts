@@ -27,7 +27,7 @@ export function requireSecrets<const N extends SecretName>(
 ): Record<N, string> {
   const missing = names.filter((name) => !env[name]?.trim());
   if (missing.length > 0) {
-    throw new MissingSecretError(`Variables absentes de .env : ${missing.join(', ')}`);
+    throw new MissingSecretError(`Missing from .env: ${missing.join(', ')}`);
   }
   return Object.fromEntries(names.map((name) => [name, env[name]!.trim()])) as Record<N, string>;
 }

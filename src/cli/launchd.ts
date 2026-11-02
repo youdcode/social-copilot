@@ -30,19 +30,19 @@ function unload(): void {
   launchctl(['bootout', `${domain}/${LAUNCHD_LABEL}`], true);
   const pause = new Int32Array(new SharedArrayBuffer(4));
   for (let waited = 0; loaded() && waited < 30_000; waited += 500) Atomics.wait(pause, 0, 0, 500);
-  if (loaded()) throw new Error('Le service tourne encore après 30 s : réessaie dans un instant.');
+  if (loaded()) throw new Error('The service is still running after 30 s: try again in a moment.');
 }
 
 const action = process.argv[2];
 
 if (process.platform !== 'darwin') {
-  console.error('Ces commandes visent macOS. Sur un VPS, utilise le service systemd décrit dans le README.');
+  console.error('These commands are for macOS. On a server, use the systemd service described in the README.');
   process.exit(1);
 }
 
 if (action === 'install') {
   if (!existsSync(path.join(PROJECT_ROOT, '.env'))) {
-    console.error('.env absent : remplis-le avant d’installer le lancement automatique.');
+    console.error('.env is missing: fill it in before installing the automatic start.');
     process.exit(1);
   }
   mkdirSync(path.dirname(plistPath), { recursive: true });
@@ -50,21 +50,21 @@ if (action === 'install') {
   unload();
   writeFileSync(plistPath, launchAgentPlist({ node: process.execPath, projectRoot: PROJECT_ROOT }));
   launchctl(['bootstrap', domain, plistPath]);
-  console.log(`Lancement automatique installé (${plistPath}).`);
-  console.log(`Node utilisé : ${process.execPath}. Après une mise à jour de Node, relance npm run mac:install.`);
+  console.log(`Automatic start installed (${plistPath}).`);
+  console.log(`Node used: ${process.execPath}. After a Node update, run npm run mac:install again.`);
   console.log('Journaux : data/logs/service.log et data/logs/service.error.log.');
 } else if (action === 'uninstall') {
   unload();
   rmSync(plistPath, { force: true });
-  console.log('Lancement automatique retiré, service arrêté.');
+  console.log('Automatic start removed, service stopped.');
 } else if (action === 'status') {
   if (!loaded()) {
-    console.log(existsSync(plistPath) ? 'Installé mais pas chargé.' : 'Lancement automatique non installé.');
+    console.log(existsSync(plistPath) ? 'Installed but not loaded.' : 'Automatic start not installed.');
   } else {
     const info = launchctl(['print', `${domain}/${LAUNCHD_LABEL}`]);
     const state = /^\s*state = (.+)$/m.exec(info)?.[1] ?? 'inconnu';
     const pid = /^\s*pid = (\d+)$/m.exec(info)?.[1];
-    console.log(`Chargé : ${state}${pid ? `, PID ${pid}` : ''}.`);
+    console.log(`Loaded: ${state}${pid ? `, PID ${pid}` : ''}.`);
   }
 } else {
   console.error('Usage : npm run mac:install | mac:uninstall | mac:status');

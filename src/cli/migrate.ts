@@ -3,5 +3,5 @@ import { openDatabase, schemaVersion } from '../db/database.ts';
 
 const config = loadConfig();
 const db = openDatabase(config.paths.database);
-console.log(`Base à jour : ${config.paths.database} (schéma v${schemaVersion(db)})`);
+console.log(`Database up to date: ${config.paths.database} (schema v${schemaVersion(db)})`);
 db.close();

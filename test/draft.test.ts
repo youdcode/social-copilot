@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
-  DRAFT_JSON_SCHEMA,
+  draftJsonSchema,
   normalizeUrl,
   similarTopics,
   validateDraft,
@@ -15,7 +15,7 @@ function draft(overrides: Record<string, unknown> = {}) {
   return {
     topic: 'Example Labs ships Model 5',
     pillar: 'ai',
-    tweet: 'Example Labs shipped Model 5 today. Cheaper and faster for small teams.',
+    text: 'Example Labs shipped Model 5 today. Cheaper and faster for small teams.',
     why_it_matters: 'Cuts inference cost for indie builders.',
     sources: ['https://example.com/blog/model-5/?utm_source=x', 'https://x.com/someone/status/1', 'https://made-up.test/page'],
     asset_request: null,
@@ -27,8 +27,8 @@ function context(overrides: Partial<ValidationContext> = {}): ValidationContext 
   return {
     references: [{ url: 'https://www.example.com/blog/model-5', title: 'Model 5' }],
     trigger: candidate({ ref: 'x:1' }),
+    network: 'x',
     filter: testFilter,
-    maxWeightedLength: 280,
     maxTriggerAgeHours: 24,
     excludedTopics: [],
     now,
@@ -63,14 +63,14 @@ describe('validateDraft', () => {
 
   test('measures the tweet as X does: a long URL counts 23', () => {
     const url = `https://example.com/${'a'.repeat(200)}`;
-    assert.equal(validateDraft(draft({ tweet: `Model 5 is out. ${url}` }), context()).ok, true);
-    const tooLong = validateDraft(draft({ tweet: 'x'.repeat(281) }), context());
+    assert.equal(validateDraft(draft({ text: `Model 5 is out. ${url}` }), context()).ok, true);
+    const tooLong = validateDraft(draft({ text: 'x'.repeat(281) }), context());
     assert.equal(tooLong.ok, false);
     if (!tooLong.ok) assert.match(tooLong.errors.join(), /281 characters/);
   });
 
   test('rejects an em dash in the tweet', () => {
-    assert.equal(validateDraft(draft({ tweet: 'Model 5 is out — and it is fast.' }), context()).ok, false);
+    assert.equal(validateDraft(draft({ text: 'Model 5 is out — and it is fast.' }), context()).ok, false);
   });
 
   test('rejects a forbidden term in any field, without naming it to the model', () => {
@@ -94,13 +94,55 @@ describe('validateDraft', () => {
   });
 });
 
-describe('DRAFT_JSON_SCHEMA', () => {
+describe('validateDraft on other networks', () => {
+  const script = {
+    hook: 'Half the price?',
+    shots: [{ visual: 'The pricing page', voiceover: 'Model 5 is out.', on_screen_text: 'Half price' }],
+    duration_s: 40,
+  };
+
+  test('counts characters as each network does: Bluesky counts an emoji once, LinkedIn allows 1,500', () => {
+    assert.equal(validateDraft(draft({ text: `${'a'.repeat(299)}🚀` }), context({ network: 'bluesky' })).ok, true);
+    assert.equal(validateDraft(draft({ text: 'a'.repeat(301) }), context({ network: 'bluesky' })).ok, false);
+    assert.equal(validateDraft(draft({ text: 'word '.repeat(290).trim() }), context({ network: 'linkedin' })).ok, true);
+    const tooLong = validateDraft(draft({ text: 'a'.repeat(1501) }), context({ network: 'linkedin' }));
+    assert.equal(tooLong.ok, false);
+    if (!tooLong.ok) assert.match(tooLong.errors.join(), /1501 characters as LinkedIn counts them/);
+  });
+
+  test('YouTube needs a title and a script; a script over 90 seconds or with an em dash is rejected', () => {
+    const youtube = context({ network: 'youtube' });
+    assert.equal(validateDraft(draft(), youtube).ok, false);
+    const ok = validateDraft(draft({ title: 'Model 5 at half the price', script }), youtube);
+    assert.equal(ok.ok, true);
+    if (ok.ok) assert.equal(ok.draft.script?.duration_s, 40);
+    assert.equal(validateDraft(draft({ title: 'Model 5', script: { ...script, duration_s: 120 } }), youtube).ok, false);
+    const dashed = { ...script, shots: [{ ...script.shots[0]!, voiceover: 'Model 5 — out now.' }] };
+    assert.equal(validateDraft(draft({ title: 'Model 5', script: dashed }), youtube).ok, false);
+  });
+
+  test('Instagram needs a visual; X does not accept a script', () => {
+    assert.equal(validateDraft(draft(), context({ network: 'instagram' })).ok, false);
+    const visual = { type: 'carousel', brief: 'Slide 1: the price cut. Slide 2: who it helps.', duration_s: 0 };
+    assert.equal(validateDraft(draft({ asset_request: visual }), context({ network: 'instagram' })).ok, true);
+    assert.equal(validateDraft(draft({ script }), context()).ok, false);
+  });
+});
+
+describe('draftJsonSchema', () => {
   test('keeps types, enums, required fields and property names, and drops bounds', () => {
-    const text = JSON.stringify(DRAFT_JSON_SCHEMA.schema);
+    const text = JSON.stringify(draftJsonSchema('x').schema);
     assert.doesNotMatch(text, /minLength|maxLength|minItems|maxItems|minimum|maximum|\$schema/);
     assert.match(text, /"enum":\["ai","startups","deeptech","devtools","motion"\]/);
     assert.match(text, /"duration_s"/);
     assert.match(text, /"additionalProperties":false/);
+  });
+
+  test('asks each network for its own fields', () => {
+    const youtube = JSON.stringify(draftJsonSchema('youtube').schema);
+    assert.match(youtube, /"title"/);
+    assert.match(youtube, /"on_screen_text"/);
+    assert.doesNotMatch(JSON.stringify(draftJsonSchema('x').schema), /"script"|"title"/);
   });
 });
 

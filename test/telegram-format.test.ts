@@ -6,11 +6,14 @@ import {
   draftCard,
   escapeHtml,
   mainMenu,
+  networkMenu,
   replyCard,
   shortUrl,
   splitMessage,
   type Card,
 } from '../src/telegram/format.ts';
+import type { Network } from '../src/networks.ts';
+import { dailyStats } from '../src/stats.ts';
 import { insertDraft, testConfig, testDb } from './helpers.ts';
 
 const now = new Date('2026-10-01T10:00:00Z');
@@ -18,9 +21,9 @@ type Button = Record<string, unknown> & { text: string };
 const buttons = (card: Card): Button[] => (card.keyboard?.inline_keyboard.flat() ?? []) as unknown as Button[];
 
 describe('draftCard', () => {
-  test('escapes the text and offers Copier, Posté, Modifier and Non on a pending draft', () => {
+  test('escapes the text and offers Copy, Posted, Edit and No on a pending draft', () => {
     const db = testDb();
-    const id = insertDraft(db, { tweet: 'R&D <fast> wins' });
+    const id = insertDraft(db, { text: 'R&D <fast> wins' });
     const card = draftCard(getDraft(db, id)!, 256);
     assert.match(card.text, /R&amp;D &lt;fast&gt; wins/);
     assert.match(card.text, /<a href="https:\/\/lab\.test\/model-5">lab\.test\/model-5<\/a>/);
@@ -34,7 +37,7 @@ describe('draftCard', () => {
 
   test('puts a text too long for the copy button in a block, without the button', () => {
     const db = testDb();
-    const id = insertDraft(db, { tweet: 'word '.repeat(55).trim() });
+    const id = insertDraft(db, { text: 'word '.repeat(55).trim() });
     const card = draftCard(getDraft(db, id)!, 256);
     assert.match(card.text, /<pre>word word/);
     assert.equal(buttons(card).some((b) => 'copy_text' in b), false);
@@ -46,8 +49,34 @@ describe('draftCard', () => {
     markPosted(db, testConfig(), id, now);
     const card = draftCard(getDraft(db, id)!, 256);
     assert.equal(card.keyboard, undefined);
-    assert.match(card.text, /✅ Posté/);
-    assert.match(card.text, /vidéo, 12 s\. Demo/);
+    assert.match(card.text, /✅ Posted/);
+    assert.match(card.text, /video, 12 s\. Demo/);
+  });
+});
+
+describe('draftCard on other networks', () => {
+  test('a YouTube card shows the title with its own copy button, and the script shot by shot', () => {
+    const db = testDb();
+    const script = { hook: 'Half the price?', shots: [{ visual: 'Pricing page', voiceover: 'Model 5 is out.', on_screen_text: '-50%' }], duration_s: 30 };
+    const id = insertDraft(db, { network: 'youtube', title: 'Model 5 <at> half price', script: JSON.stringify(script) });
+    const card = draftCard(getDraft(db, id)!, 256);
+    assert.match(card.text, /^<b>YouTube Shorts · draft #1<\/b>/);
+    assert.match(card.text, /<b>Title:<\/b> Model 5 &lt;at&gt; half price/);
+    assert.match(card.text, /<b>Hook:<\/b> Half the price\?\n1\. 🎥 Pricing page\n    🗣 Model 5 is out\.\n    🔤 -50%/);
+    assert.deepEqual(
+      buttons(card).filter((b) => 'copy_text' in b).map((b) => b.text),
+      ['📋 Copy', '📋 Title'],
+    );
+  });
+
+  test('a card too long for one Telegram message sends the text first, on its own', () => {
+    const db = testDb();
+    const id = insertDraft(db, { network: 'linkedin', text: 'word '.repeat(300).trim(), why_it_matters: 'x'.repeat(2600) });
+    const card = draftCard(getDraft(db, id)!, 256);
+    assert.equal(card.before?.length, 1);
+    assert.match(card.before![0]!, /^<pre>word word/);
+    assert.ok(card.text.length <= 4096);
+    assert.match(card.text, /The post is in the message above/);
   });
 });
 
@@ -64,7 +93,7 @@ describe('replyCard', () => {
     parentText: null,
     parentUrl: null,
     worthReplying: true,
-    reason: 'sujet chaud',
+    reason: 'hot topic',
     variants: ['One.', 'Two.', 'x'.repeat(300)],
     status: 'proposed',
     telegramMessageId: null,
@@ -72,8 +101,8 @@ describe('replyCard', () => {
 
   test('shows the advice, the freshness and a copy button per variant that fits', () => {
     const card = replyCard(reply, now, 256);
-    assert.match(card.text, /Vaut une réponse : sujet chaud/);
-    assert.match(card.text, /Post de 25 min\./);
+    assert.match(card.text, /Worth a reply: hot topic/);
+    assert.match(card.text, /Post is 25 min old\./);
     assert.match(card.text, /<pre>x{300}<\/pre>/);
     const all = buttons(card);
     assert.deepEqual(all.filter((b) => 'copy_text' in b).map((b) => b.text), ['📋 1', '📋 2']);
@@ -82,21 +111,30 @@ describe('replyCard', () => {
 
   test('warns when the post is older than an hour, and drops the buttons once settled', () => {
     const late = replyCard({ ...reply, postCreatedAt: '2026-10-01T07:00:00.000Z', status: 'replied' }, now, 256);
-    assert.match(late.text, /Post de 3 h : une réponse portera moins/);
-    assert.match(late.text, /✅ Répondu/);
+    assert.match(late.text, /Post is 3 h old: a reply will reach fewer people/);
+    assert.match(late.text, /✅ Replied/);
     assert.equal(late.keyboard, undefined);
   });
 });
 
 describe('menus and helpers', () => {
-  test('networks not enabled show as waiting, disabled', () => {
-    const all = buttons(mainMenu(testConfig()));
+  test('networks off in the config show as off, disabled', () => {
+    const config = testConfig((c) => {
+      c.networks.instagram.enabled = false;
+      c.networks.youtube.enabled = false;
+    });
+    const all = buttons(mainMenu(config));
+    assert.equal(all.length, 7);
     assert.deepEqual(all[0], { text: 'X', callback_data: 'net:x' });
-    assert.deepEqual(all.slice(1).map((b) => [b.text, 'disabled' in b]), [
-      ['Instagram · en attente', true],
-      ['TikTok · en attente', true],
-      ['YouTube · en attente', true],
-    ]);
+    assert.deepEqual(all.find((b) => b.text.startsWith('LinkedIn')), { text: 'LinkedIn', callback_data: 'net:linkedin' });
+    assert.deepEqual(all.filter((b) => 'disabled' in b).map((b) => b.text), ['Instagram · off', 'YouTube Shorts · off']);
+  });
+
+  test('the X menu has the reply features; other networks do not', () => {
+    const stats = dailyStats(testDb(), testConfig(), now);
+    const data = (network: Network) => buttons(networkMenu(network, stats)).map((b) => b.callback_data);
+    assert.deepEqual(data('x'), ['pend:x', 'targets', 'mentions', 'assets:x', 'chat:x', 'home']);
+    assert.deepEqual(data('linkedin'), ['pend:linkedin', 'assets:linkedin', 'chat:linkedin', 'home']);
   });
 
   test('escapes HTML, shortens URLs and splits long messages on line breaks', () => {

@@ -22,7 +22,7 @@ const clusterSchema = z.strictObject({
 
 const CLUSTER_JSON_SCHEMA = toJsonSchemaSpec('topics', clusterSchema);
 
-const SYSTEM = `You group tech news items into topics for an X account covering five pillars: ai (AI releases, new features, major updates), startups, deeptech, devtools (developer tools), motion (motion design and creative tools).
+const SYSTEM = `You group tech news items into topics for a tech account covering five pillars: ai (AI releases, new features, major updates), startups, deeptech, devtools (developer tools), motion (motion design and creative tools).
 
 Rules:
 - A topic is one concrete event: a release, a feature, an update, a funding round, a launch, a paper, an acquisition.

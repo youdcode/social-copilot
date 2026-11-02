@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import { NETWORKS, type Network } from './networks.ts';
 
 export const PROJECT_ROOT = path.resolve(import.meta.dirname, '..');
 export const DEFAULT_CONFIG_PATH = path.join(PROJECT_ROOT, 'config', 'config.json');
 
-const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'format HH:MM attendu');
-const xHandle = z.string().regex(/^[A-Za-z0-9_]{1,15}$/, 'pseudo X invalide (sans @, 15 caractères au plus)');
+const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'expected HH:MM');
+const xHandle = z.string().regex(/^[A-Za-z0-9_]{1,15}$/, 'invalid X handle (no @, 15 characters at most)');
 const amount = z.number().nonnegative();
 const vatMultiplier = z.number().min(1).max(2);
 
@@ -17,27 +18,25 @@ const timeZone = z.string().refine((value) => {
   } catch {
     return false;
   }
-}, 'fuseau horaire inconnu');
+}, 'unknown time zone');
 
 const modelPrice = z.strictObject({
   inputPerMillion: amount,
   outputPerMillion: amount,
 });
 
-const network = z.strictObject({ enabled: z.boolean() });
-
-const configSchema = z.strictObject({
-  timezone: timeZone,
+/** A network gets one draft per slot, at these times of the configured time zone, when enabled. */
+const network = z.strictObject({
+  enabled: z.boolean(),
   slots: z
     .array(clockTime)
     .min(1)
-    .refine((slots) => new Set(slots).size === slots.length, 'créneaux en double'),
-  networks: z.strictObject({
-    x: network,
-    instagram: network,
-    tiktok: network,
-    youtube: network,
-  }),
+    .refine((slots) => new Set(slots).size === slots.length, 'duplicate slots'),
+});
+
+const configSchema = z.strictObject({
+  timezone: timeZone,
+  networks: z.strictObject(Object.fromEntries(NETWORKS.map((n) => [n, network])) as Record<Network, typeof network>),
   mistral: z
     .strictObject({
       models: z.strictObject({
@@ -62,7 +61,7 @@ const configSchema = z.strictObject({
           ctx.addIssue({
             code: 'custom',
             path: ['models', role],
-            message: `pas de tarif pour le modèle ${model} dans pricesEur.models`,
+            message: `no price for model ${model} in pricesEur.models`,
           });
         }
       }
@@ -73,7 +72,7 @@ const configSchema = z.strictObject({
       .array(xHandle)
       .refine(
         (handles) => new Set(handles.map((h) => h.toLowerCase())).size === handles.length,
-        'compte suivi en double',
+        'duplicate watched account',
       ),
     timelineExclude: z.array(z.enum(['retweets', 'replies'])),
     dailyCapUsd: amount.positive(),
@@ -95,7 +94,6 @@ const configSchema = z.strictObject({
     maxAttempts: z.number().int().min(1).max(10),
     exclusionDays: z.number().int().nonnegative(),
     triggerMaxAgeHours: z.number().positive(),
-    tweetMaxWeightedLength: z.number().int().min(1).max(280),
   }),
   telegram: z.strictObject({
     copyButtonMaxChars: z.number().int().min(1).max(256),
@@ -113,6 +111,11 @@ const configSchema = z.strictObject({
 
 export type AppConfig = z.infer<typeof configSchema>;
 
+/** Networks switched on in the config, in display order. */
+export function enabledNetworks(config: AppConfig): Network[] {
+  return NETWORKS.filter((n) => config.networks[n].enabled);
+}
+
 export class ConfigError extends Error {
   override name = 'ConfigError';
 }
@@ -124,9 +127,9 @@ export function parseConfig(raw: unknown, rootDir: string = PROJECT_ROOT): AppCo
   const result = configSchema.safeParse(raw);
   if (!result.success) {
     const details = result.error.issues
-      .map((issue) => `- ${issue.path.join('.') || '(racine)'} : ${issue.message}`)
+      .map((issue) => `- ${issue.path.join('.') || '(root)'}: ${issue.message}`)
       .join('\n');
-    throw new ConfigError(`Config invalide :\n${details}`);
+    throw new ConfigError(`Invalid config:\n${details}`);
   }
   const config = result.data;
   return {
@@ -145,7 +148,7 @@ export function loadConfig(configPath: string = DEFAULT_CONFIG_PATH): AppConfig 
   try {
     raw = JSON.parse(readFileSync(configPath, 'utf8'));
   } catch (error) {
-    throw new ConfigError(`Lecture de ${configPath} impossible : ${(error as Error).message}`);
+    throw new ConfigError(`Cannot read ${configPath}: ${(error as Error).message}`);
   }
   return parseConfig(raw, path.resolve(path.dirname(configPath), '..'));
 }

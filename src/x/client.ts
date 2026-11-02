@@ -79,11 +79,11 @@ type XErrorBody = { title?: string; detail?: string; errors?: Array<{ message?: 
 
 function describe(status: number, body: XErrorBody, tokens: string): string {
   const detail = body.detail ?? body.errors?.map((e) => e.message ?? e.detail).join(' ; ') ?? body.title ?? '';
-  if (status === 401) return `X refuse le jeton (401) : vérifie ${tokens} dans .env. ${detail}`.trim();
-  if (status === 402) return `X refuse la requête faute de crédits (402). ${detail}`.trim();
-  if (status === 403) return `X refuse l'accès (403). ${detail}`.trim();
-  if (status === 429) return 'Limite de débit X atteinte (429).';
-  return `Erreur X ${status}. ${detail}`.trim();
+  if (status === 401) return `X refuses the token (401): check ${tokens} in .env. ${detail}`.trim();
+  if (status === 402) return `X refuses the request for lack of credits (402). ${detail}`.trim();
+  if (status === 403) return `X refuses access (403). ${detail}`.trim();
+  if (status === 429) return 'X rate limit reached (429).';
+  return `X error ${status}. ${detail}`.trim();
 }
 
 function isoSeconds(date: Date): string {
@@ -200,11 +200,11 @@ export function createXUserClient(options: {
   baseUrl?: string;
 }): XUserClient {
   const accountId = accountIdFromToken(options.credentials.token);
-  if (!accountId) throw new Error("X_ACCESS_TOKEN n'a pas la forme attendue (<identifiant>-<jeton>).");
+  if (!accountId) throw new Error('X_ACCESS_TOKEN does not have the expected form (<account id>-<token>).');
   const api = createRequester({
     ...options,
     authorize: (url) => oauth1Header('GET', url, options.credentials),
-    tokens: 'X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN et X_ACCESS_TOKEN_SECRET',
+    tokens: 'X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN and X_ACCESS_TOKEN_SECRET',
   });
 
   return {

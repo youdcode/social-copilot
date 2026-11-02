@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import type { MistralGateway } from '../src/mistral/gateway.ts';
-import { createServiceState, runSlotIfDue, tick, type ServiceDeps } from '../src/service.ts';
+import { createServiceState, runSlotsIfDue, tick, type ServiceDeps } from '../src/service.ts';
 import type { XClient } from '../src/x/client.ts';
 import { fakeFetch, testConfig, testDb, testFilter } from './helpers.ts';
 
-function makeDeps(clock: { now: Date }, options: { xCalls?: string[] } = {}) {
+function makeDeps(clock: { now: Date }, options: { xCalls?: string[]; networks?: Record<string, string[]> } = {}) {
   const alerts: string[] = [];
   const x: XClient = {
     async lookupUsers(usernames) {
@@ -35,6 +35,12 @@ function makeDeps(clock: { now: Date }, options: { xCalls?: string[] } = {}) {
     db: testDb(),
     config: testConfig((c) => {
       c.x.watchedAccounts = ['alpha'];
+      // Only the networks a test names are on, with their slots; X alone by default.
+      const networks: Record<string, string[]> = options.networks ?? { x: c.networks.x.slots };
+      for (const [name, network] of Object.entries(c.networks) as Array<[string, { enabled: boolean; slots: string[] }]>) {
+        network.enabled = name in networks;
+        if (networks[name]) network.slots = networks[name];
+      }
       c.sources.rssFeeds = [];
       c.sources.hackerNews.enabled = false;
     }),
@@ -50,17 +56,19 @@ function makeDeps(clock: { now: Date }, options: { xCalls?: string[] } = {}) {
   return { deps, alerts };
 }
 
-describe('runSlotIfDue', () => {
-  test('handles each slot once, and the next slot when it comes', async () => {
+describe('runSlotsIfDue', () => {
+  test('handles each slot of each network once, and the next slot when it comes', async () => {
+    // 09:05 in Paris.
     const clock = { now: new Date('2026-10-01T07:05:00Z') };
-    const { deps } = makeDeps(clock);
+    const { deps } = makeDeps(clock, { networks: { x: ['09:00', '13:00'], linkedin: ['08:30'] } });
     const state = createServiceState();
-    assert.equal((await runSlotIfDue(deps, state))?.status, 'no_topic');
+    const statuses = async () => (await runSlotsIfDue(deps, state)).map((r) => `${r.network}:${r.outcome.status}`);
+    assert.deepEqual(await statuses(), ['x:no_topic', 'linkedin:no_topic']);
     clock.now = new Date('2026-10-01T07:06:00Z');
-    assert.equal(await runSlotIfDue(deps, state), null);
+    assert.deepEqual(await statuses(), []);
     clock.now = new Date('2026-10-01T11:00:30Z');
-    assert.equal((await runSlotIfDue(deps, state))?.status, 'no_topic');
-    assert.equal(deps.db.prepare('SELECT count(*) FROM slot_runs').pluck().get(), 2);
+    assert.deepEqual(await statuses(), ['x:no_topic']);
+    assert.equal(deps.db.prepare('SELECT count(*) FROM slot_runs').pluck().get(), 3);
   });
 });
 

@@ -86,7 +86,7 @@ function compileTerm(term: string): RegExp {
 
 export function createForbiddenTermsFilter(terms: readonly string[]): ForbiddenTermsFilter {
   if (terms.length === 0) {
-    throw new ForbiddenTermsError('La liste de termes interdits est vide : la génération reste bloquée.');
+    throw new ForbiddenTermsError('The forbidden terms list is empty: generation stays blocked.');
   }
   const compiled = terms.map((term) => ({ term, pattern: compileTerm(term) }));
 
@@ -123,7 +123,7 @@ export function loadForbiddenTerms(filePath: string): ForbiddenTermsFilter {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new ForbiddenTermsError(
-        `Fichier de termes interdits introuvable : ${filePath}. Crée-le à partir de config/forbidden-terms.example.txt.`,
+        `Forbidden terms file not found: ${filePath}. Create it from config/forbidden-terms.example.txt.`,
       );
     }
     throw error;

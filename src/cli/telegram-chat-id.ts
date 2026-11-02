@@ -30,7 +30,7 @@ async function getUpdates(offset: number | undefined): Promise<TelegramUpdate[]>
   return body.result ?? [];
 }
 
-console.log(`Envoie un message au bot depuis ton compte Telegram (attente jusqu'à ${(POLL_SECONDS * MAX_POLLS) / 60} min)…`);
+console.log(`Send a message to the bot from your Telegram account (waiting up to ${(POLL_SECONDS * MAX_POLLS) / 60} min)…`);
 
 let offset: number | undefined;
 for (let poll = 0; poll < MAX_POLLS; poll++) {
@@ -45,14 +45,14 @@ for (let poll = 0; poll < MAX_POLLS; poll++) {
   if (chats.length > 0) {
     for (const chat of chats) {
       const who = [chat.firstName, chat.username && `@${chat.username}`].filter(Boolean).join(' ');
-      console.log(`Chat privé de ${who || 'un compte sans nom'} : TELEGRAM_ALLOWED_CHAT_ID=${chat.chatId}`);
+      console.log(`Private chat of ${who || 'an account without a name'}: TELEGRAM_ALLOWED_CHAT_ID=${chat.chatId}`);
     }
-    if (chats.length > 1) console.log('Plusieurs comptes ont écrit : ne garde que le tien.');
+    if (chats.length > 1) console.log('Several accounts wrote: keep only yours.');
     process.exit(0);
   }
   const last = updates.at(-1);
   if (last) offset = last.update_id + 1;
 }
 
-console.log("Aucun message privé reçu. Écris au bot, puis relance la commande.");
+console.log('No private message received. Write to the bot, then run the command again.');
 process.exit(1);

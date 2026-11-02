@@ -1,11 +1,34 @@
 {
   "timezone": "Europe/Paris",
-  "slots": ["09:00", "13:00", "17:00", "21:00"],
   "networks": {
-    "x": { "enabled": true },
-    "instagram": { "enabled": false },
-    "tiktok": { "enabled": false },
-    "youtube": { "enabled": false }
+    "x": {
+      "enabled": true,
+      "slots": ["09:00", "13:00", "17:00", "21:00"]
+    },
+    "threads": {
+      "enabled": true,
+      "slots": ["10:00", "18:00"]
+    },
+    "bluesky": {
+      "enabled": true,
+      "slots": ["10:00", "18:00"]
+    },
+    "linkedin": {
+      "enabled": true,
+      "slots": ["08:30"]
+    },
+    "instagram": {
+      "enabled": true,
+      "slots": ["12:00"]
+    },
+    "tiktok": {
+      "enabled": true,
+      "slots": ["19:00"]
+    },
+    "youtube": {
+      "enabled": true,
+      "slots": ["19:30"]
+    }
   },
   "mistral": {
     "models": {
@@ -20,8 +43,14 @@
     "countConnectorTokensAsInput": true,
     "pricesEur": {
       "models": {
-        "mistral-medium-3-5": { "inputPerMillion": 1.25, "outputPerMillion": 6.4 },
-        "mistral-small-2603": { "inputPerMillion": 0.12, "outputPerMillion": 0.5 }
+        "mistral-medium-3-5": {
+          "inputPerMillion": 1.25,
+          "outputPerMillion": 6.4
+        },
+        "mistral-small-2603": {
+          "inputPerMillion": 0.12,
+          "outputPerMillion": 0.5
+        }
       },
       "webSearchPerCall": 0.03,
       "webSearchPremiumPerCall": 0.05
@@ -114,13 +143,15 @@
       "https://simonwillison.net/atom/everything/",
       "https://www.latent.space/feed"
     ],
-    "hackerNews": { "enabled": true, "topStories": 30 }
+    "hackerNews": {
+      "enabled": true,
+      "topStories": 30
+    }
   },
   "generation": {
     "maxAttempts": 3,
     "exclusionDays": 7,
-    "triggerMaxAgeHours": 24,
-    "tweetMaxWeightedLength": 280
+    "triggerMaxAgeHours": 24
   },
   "telegram": {
     "copyButtonMaxChars": 256
@@ -129,8 +160,8 @@
     "xTextHours": 24
   },
   "paths": {
-    "database": "data/copilote.sqlite",
-    "lock": "data/copilote.lock",
+    "database": "data/social-copilot.sqlite",
+    "lock": "data/social-copilot.lock",
     "forbiddenTerms": "config/forbidden-terms.txt",
     "voice": "voice.md"
   }

@@ -1,8 +1,8 @@
-import twitterText from 'twitter-text';
 import { z } from 'zod';
 import type { ForbiddenTermsFilter } from '../filters/forbidden-terms.ts';
 import { normalizeForMatching } from '../filters/forbidden-terms.ts';
 import type { WebReference, JsonSchemaSpec } from '../mistral/gateway.ts';
+import { graphemeLength, MAX_TITLE_LENGTH, MAX_VIDEO_SECONDS, NETWORK_SPECS, type Network } from '../networks.ts';
 import { hoursBetween } from '../time.ts';
 import type { Candidate } from './candidates.ts';
 import type { RankedTopic } from './rank.ts';
@@ -11,25 +11,68 @@ export const PILLARS = ['ai', 'startups', 'deeptech', 'devtools', 'motion'] as c
 export type Pillar = (typeof PILLARS)[number];
 
 /** Bump when the prompt changes, so each stored draft says which prompt wrote it. */
-export const PROMPT_VERSION = '2026-10-01.1';
+export const PROMPT_VERSION = '2026-11-02.1';
 
-export const draftSchema = z.strictObject({
-  topic: z.string().min(3).max(140),
-  pillar: z.enum(PILLARS),
-  tweet: z.string().min(1).max(1000),
-  why_it_matters: z.string().min(1).max(400),
-  sources: z.array(z.string().min(1)).min(1).max(8),
-  asset_request: z.union([
-    z.null(),
-    z.strictObject({
-      type: z.enum(['video', 'image', 'screenshot']),
-      brief: z.string().min(1).max(600),
-      duration_s: z.number().min(0).max(600),
-    }),
-  ]),
+export const ASSET_TYPES = ['video', 'image', 'carousel', 'screenshot'] as const;
+
+const assetSchema = z.strictObject({
+  type: z.enum(ASSET_TYPES),
+  brief: z.string().min(1).max(1200),
+  duration_s: z.number().min(0).max(600),
 });
 
-export type DraftJson = z.infer<typeof draftSchema>;
+const scriptSchema = z.strictObject({
+  hook: z.string().min(1).max(300),
+  shots: z
+    .array(
+      z.strictObject({
+        visual: z.string().min(1).max(400),
+        voiceover: z.string().max(600),
+        on_screen_text: z.string().max(200),
+      }),
+    )
+    .min(1)
+    .max(12),
+  duration_s: z.number().min(1).max(600),
+});
+
+export type AssetRequest = z.infer<typeof assetSchema>;
+export type VideoScript = z.infer<typeof scriptSchema>;
+
+/** A draft for any network. title is set for YouTube only, script for video networks only. */
+export type DraftJson = {
+  topic: string;
+  pillar: Pillar;
+  text: string;
+  why_it_matters: string;
+  sources: string[];
+  asset_request: AssetRequest | null;
+  title: string | null;
+  script: VideoScript | null;
+};
+
+/** The written part of a draft on one network: its text, plus a title (YouTube) or a script (video networks). */
+export function contentSchemaFor(network: Network) {
+  const spec = NETWORK_SPECS[network];
+  return z.strictObject({
+    ...(spec.title ? { title: z.string().min(1).max(300) } : {}),
+    text: z.string().min(1).max(5000),
+    ...(spec.video ? { script: scriptSchema } : {}),
+  });
+}
+
+/** What Mistral returns for one network: the fields every draft has, plus the title, script or visual it needs. */
+export function draftSchemaFor(network: Network) {
+  const spec = NETWORK_SPECS[network];
+  return z.strictObject({
+    topic: z.string().min(3).max(140),
+    pillar: z.enum(PILLARS),
+    ...contentSchemaFor(network).shape,
+    why_it_matters: z.string().min(1).max(400),
+    sources: z.array(z.string().min(1)).min(1).max(8),
+    asset_request: spec.assetRequired ? assetSchema : z.union([z.null(), assetSchema]),
+  });
+}
 
 /** Bounds that strict structured output may refuse. The code checks them after parsing, with zod. */
 const CONSTRAINT_KEYWORDS = new Set([
@@ -70,21 +113,43 @@ export function toJsonSchemaSpec(name: string, schema: z.ZodType): JsonSchemaSpe
   return { name, schema: stripConstraints(z.toJSONSchema(schema)) as Record<string, unknown> };
 }
 
-export const DRAFT_JSON_SCHEMA = toJsonSchemaSpec('tweet_draft', draftSchema);
+const jsonSchemas = new Map<Network, JsonSchemaSpec>();
 
-export function systemPrompt(voice: string, excludedTopics: readonly string[]): string {
-  return `You write tweets for an anonymous X account about tech: AI releases, new features and major updates, startups, deeptech, dev tools, motion design.
+export function draftJsonSchema(network: Network): JsonSchemaSpec {
+  let spec = jsonSchemas.get(network);
+  if (!spec) {
+    spec = toJsonSchemaSpec(`draft_${network}`, draftSchemaFor(network));
+    jsonSchemas.set(network, spec);
+  }
+  return spec;
+}
+
+function whatYouWrite(network: Network): string {
+  const spec = NETWORK_SPECS[network];
+  if (network === 'x') return 'tweets for an anonymous X account';
+  if (spec.video) return `short videos for an anonymous ${spec.name} account`;
+  return `${spec.textName}s for an anonymous ${spec.name} account`;
+}
+
+export function systemPrompt(voice: string, excludedTopics: readonly string[], network: Network = 'x'): string {
+  const spec = NETWORK_SPECS[network];
+  const asset = spec.video
+    ? 'Set asset_request to null: the script already says what to film.'
+    : spec.assetRequired
+      ? 'Describe the visual in asset_request with a precise brief.'
+      : `If a short video or image would make the ${spec.textName} much stronger, fill asset_request with a precise brief. Otherwise null.`;
+  return `You write ${whatYouWrite(network)} about tech: AI releases, new features and major updates, startups, deeptech, dev tools, motion design.
 
 Voice: ${voice.trim()}
 
 Rules:
-- One tweet, 280 characters max, native English. No hashtags unless essential. One emoji at most.
-- Say what shipped and why it matters, in one or two sentences. No hype words.
-- Use only facts from the trigger post provided and from your web search. Every claim must be backed by a source you return. Never invent numbers, quotes or dates.
+${spec.rules.map((rule) => `- ${rule}`).join('\n')}
+- Native English, never translated. No hype words.
+- Use only facts from the trigger provided and from your web search. Every claim must be backed by a source you return. Never invent numbers, quotes or dates.
 - In sources, list only URLs you actually opened in your web search, plus the trigger URL provided.
 - Never mention the account owner, their location, their company, or anything personal.
 - No em dashes.
-- If a short video or image would make the tweet much stronger, fill asset_request with a precise brief. Otherwise null.
+- ${asset}
 - Do not cover these topics, already posted or refused: ${excludedTopics.length > 0 ? excludedTopics.join('; ') : 'none'}
 
 Return only the JSON object, nothing else.`;
@@ -153,49 +218,69 @@ export function similarTopics(a: string, b: string): boolean {
   return shared / Math.min(wa.size, wb.size) >= 0.6;
 }
 
+/** The written part of a draft: what "Modifier" rewrites, and what the network checks apply to. */
+export type DraftContent = { text: string; title: string | null; script: VideoScript | null };
+
+function scriptStrings(script: VideoScript | null): string[] {
+  if (!script) return [];
+  return [script.hook, ...script.shots.flatMap((s) => [s.visual, s.voiceover, s.on_screen_text])];
+}
+
 /**
- * The checks a lone tweet or reply must pass: X length, no em dash, no forbidden term.
- * Errors are phrased for the model and never name a forbidden term.
+ * The checks the written part of a draft must pass on its network: length as the network counts it, title length,
+ * video duration, no em dash, no forbidden term. Errors are phrased for the model and never name a forbidden term.
  */
-export function checkTweetText(
-  text: string,
+export function checkContent(
+  content: DraftContent,
   filter: ForbiddenTermsFilter,
-  maxWeightedLength: number,
-): { weightedLength: number; errors: string[] } {
-  const { weightedLength } = twitterText.parseTweet(text);
+  network: Network,
+): { length: number; errors: string[] } {
+  const spec = NETWORK_SPECS[network];
+  const length = spec.measure(content.text);
   const errors: string[] = [];
-  if (text.trim() === '') errors.push('The text is empty.');
-  if (weightedLength > maxWeightedLength) {
-    errors.push(`The text is ${weightedLength} characters as X counts them; the limit is ${maxWeightedLength}.`);
+  if (content.text.trim() === '') errors.push(`The ${spec.textName} is empty.`);
+  if (length > spec.maxLength) {
+    errors.push(`The ${spec.textName} is ${length} characters as ${spec.name} counts them; the limit is ${spec.maxLength}.`);
   }
-  if (text.includes('—')) errors.push('The text contains an em dash.');
-  if (filter.findInText(text).length > 0) {
-    errors.push('The text mentions a forbidden subject. Remove any personal or owner-related reference.');
+  if (spec.title) {
+    if (!content.title?.trim()) errors.push('The title is missing.');
+    else if (graphemeLength(content.title) > MAX_TITLE_LENGTH) errors.push(`The title is longer than ${MAX_TITLE_LENGTH} characters.`);
   }
-  return { weightedLength, errors };
+  if (spec.video) {
+    if (!content.script) errors.push('The script is missing.');
+    else if (content.script.duration_s > MAX_VIDEO_SECONDS) errors.push(`The video lasts more than ${MAX_VIDEO_SECONDS} seconds.`);
+  }
+  if ([content.text, content.title ?? '', ...scriptStrings(content.script)].some((t) => t.includes('—'))) {
+    errors.push('The text contains an em dash.');
+  }
+  if (filter.findInValue(content).length > 0) {
+    errors.push('It mentions a forbidden subject. Remove any personal or owner-related reference.');
+  }
+  return { length, errors };
 }
 
 export type ValidationContext = {
+  network: Network;
   references: readonly WebReference[];
   trigger: Candidate;
   filter: ForbiddenTermsFilter;
-  maxWeightedLength: number;
   maxTriggerAgeHours: number;
   excludedTopics: readonly string[];
   now: Date;
 };
 
 export type ValidationResult =
-  | { ok: true; draft: DraftJson; weightedLength: number }
+  | { ok: true; draft: DraftJson; length: number }
   | { ok: false; errors: string[]; forbiddenHits: string[] };
 
 /**
- * The code checks that gate every draft before Telegram: schema, X length, no em dash, no forbidden term,
- * sources restricted to pages the search returned plus the trigger URL, fresh trigger, topic not excluded.
- * Errors are phrased so they can be sent back to the model; forbidden terms are never named in them.
+ * The code checks that gate every draft before Telegram: schema of its network, length as the network counts it,
+ * no em dash, no forbidden term in any field, sources restricted to pages the search returned plus the trigger URL,
+ * fresh trigger, topic not excluded. Errors are phrased so they can be sent back to the model; forbidden terms are
+ * never named in them.
  */
 export function validateDraft(raw: unknown, ctx: ValidationContext): ValidationResult {
-  const parsed = draftSchema.safeParse(raw);
+  const parsed = draftSchemaFor(ctx.network).safeParse(raw);
   if (!parsed.success) {
     return {
       ok: false,
@@ -203,17 +288,19 @@ export function validateDraft(raw: unknown, ctx: ValidationContext): ValidationR
       forbiddenHits: [],
     };
   }
-  const draft = parsed.data;
-  const errors: string[] = [];
-
-  const { weightedLength } = twitterText.parseTweet(draft.tweet);
-  if (weightedLength > ctx.maxWeightedLength) {
-    errors.push(`The tweet is ${weightedLength} characters as X counts them; the limit is ${ctx.maxWeightedLength}.`);
-  }
-  if (draft.tweet.includes('—')) errors.push('The tweet contains an em dash.');
+  const draft: DraftJson = {
+    ...parsed.data,
+    asset_request: parsed.data.asset_request ?? null,
+    title: 'title' in parsed.data ? (parsed.data.title as string) : null,
+    script: 'script' in parsed.data ? (parsed.data.script as VideoScript) : null,
+  };
+  const content = checkContent({ text: draft.text, title: draft.title, script: draft.script }, ctx.filter, ctx.network);
+  const errors = [...content.errors];
 
   const hits = ctx.filter.findInValue(draft).map((hit) => `${hit.term} (${hit.path})`);
-  if (hits.length > 0) errors.push('The draft mentions a forbidden subject. Remove any personal or owner-related reference.');
+  if (hits.length > 0 && !errors.some((e) => e.includes('forbidden subject'))) {
+    errors.push('It mentions a forbidden subject. Remove any personal or owner-related reference.');
+  }
 
   const allowed = new Map<string, string>();
   for (const ref of ctx.references) {
@@ -240,5 +327,5 @@ export function validateDraft(raw: unknown, ctx: ValidationContext): ValidationR
   if (excluded) errors.push(`This topic was already posted or refused recently: "${excluded}".`);
 
   if (errors.length > 0) return { ok: false, errors, forbiddenHits: hits };
-  return { ok: true, draft: { ...draft, sources: [...kept.values()] }, weightedLength };
+  return { ok: true, draft: { ...draft, sources: [...kept.values()] }, length: content.length };
 }

@@ -3,14 +3,15 @@ import type { Db } from '../db/database.ts';
 import type { ForbiddenTermsFilter } from '../filters/forbidden-terms.ts';
 import type { MistralGateway, WebReference } from '../mistral/gateway.ts';
 import { parseJsonOutput } from '../mistral/gateway.ts';
+import { NETWORK_SPECS, type Network } from '../networks.ts';
 import type { Notifier, ProposedDraft } from '../notifier.ts';
 import { assertBudget, BudgetExceededError, recordMistralUsage } from '../spend.ts';
 import type { Candidate } from './candidates.ts';
 import { gatherCandidates } from './candidates.ts';
 import { clusterCandidates } from './cluster.ts';
 import type { DraftJson } from './draft.ts';
-import { DRAFT_JSON_SCHEMA, draftInput, PROMPT_VERSION, systemPrompt, validateDraft } from './draft.ts';
-import type { RankedTopic } from './rank.ts';
+import { draftInput, draftJsonSchema, PROMPT_VERSION, similarTopics, systemPrompt, validateDraft } from './draft.ts';
+import type { RankedTopic, Topic } from './rank.ts';
 import { rankTopics } from './rank.ts';
 
 export type GeneratorDeps = {
@@ -52,17 +53,24 @@ export type SlotOutcome = {
 
 const RESEARCH_INSTRUCTIONS = `Research the topic below with web search. Report only verified facts, each with the URL of the page that supports it. Use native English, no em dashes. Do not write a tweet.`;
 
-/** Topics posted or refused whose exclusion has not expired. */
-export function activeExcludedTopics(db: Db, now: Date): string[] {
+/** Topics posted or refused on this network whose exclusion has not expired. */
+export function activeExcludedTopics(db: Db, now: Date, network: Network = 'x'): string[] {
   return db
-    .prepare('SELECT DISTINCT topic FROM excluded_topics WHERE excluded_until > ? ORDER BY topic')
+    .prepare('SELECT DISTINCT topic FROM excluded_topics WHERE excluded_until > ? AND network = ? ORDER BY topic')
     .pluck()
-    .all(now.toISOString()) as string[];
+    .all(now.toISOString(), network) as string[];
 }
 
-export function pendingDraftExists(db: Db): boolean {
-  return db.prepare("SELECT 1 FROM drafts WHERE status IN ('proposed', 'edited') LIMIT 1").get() !== undefined;
+export function pendingDraftExists(db: Db, network: Network = 'x'): boolean {
+  return (
+    db.prepare("SELECT 1 FROM drafts WHERE network = ? AND status IN ('proposed', 'edited') LIMIT 1").get(network) !==
+    undefined
+  );
 }
+
+/** Topics grouped from one set of items, reused while the items are the same: networks sharing a slot pay once. */
+export type ClusterCache = { current?: { key: string; at: number; topics: Topic[] } };
+export const CLUSTER_CACHE_MINUTES = 20;
 
 type RawAttempt = { raw: unknown; references: WebReference[]; toolCalls: number; jsonParsed: boolean; parseError?: string };
 
@@ -70,12 +78,14 @@ type RawAttempt = { raw: unknown; references: WebReference[]; toolCalls: number;
 async function draftOnce(
   deps: GeneratorDeps,
   mode: DraftMode,
+  network: Network,
   topic: RankedTopic,
   excluded: string[],
   feedback: string[],
 ): Promise<RawAttempt> {
   const { config, gateway, db } = deps;
-  const system = systemPrompt(deps.voice, excluded);
+  const system = systemPrompt(deps.voice, excluded, network);
+  const jsonSchema = draftJsonSchema(network);
   const input = draftInput(topic, deps.now(), feedback);
   const model = config.mistral.models.draft;
 
@@ -93,7 +103,7 @@ async function draftOnce(
       tool: config.mistral.webSearchTool,
       instructions: system,
       input,
-      jsonSchema: DRAFT_JSON_SCHEMA,
+      jsonSchema,
     });
     recordMistralUsage(db, config, result.usage, deps.now());
     return { ...parse(result.text), references: result.references, toolCalls: result.toolCalls };
@@ -112,25 +122,28 @@ async function draftOnce(
     model,
     system,
     user: `${input}\n\nVerified facts from your web search:\n${research.text}\n\nPages you may cite:\n${pages || '- none'}`,
-    jsonSchema: DRAFT_JSON_SCHEMA,
+    jsonSchema,
   });
   recordMistralUsage(db, config, written.usage, deps.now());
   return { ...parse(written.text), references: research.references, toolCalls: research.toolCalls };
 }
 
-function saveDraft(db: Db, slotAt: Date, topic: RankedTopic, draft: DraftJson): number {
+function saveDraft(db: Db, network: Network, slotAt: Date, topic: RankedTopic, draft: DraftJson): number {
   const trigger: Candidate = topic.trigger;
   const result = db
     .prepare(
-      `INSERT INTO drafts (network, slot_at, pillar, topic, tweet, why_it_matters, sources, asset_request,
+      `INSERT INTO drafts (network, slot_at, pillar, topic, text, title, script, why_it_matters, sources, asset_request,
          trigger_kind, trigger_ref, trigger_url, trigger_published_at, prompt_version, topic_items)
-       VALUES ('x', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
+      network,
       slotAt.toISOString(),
       draft.pillar,
       draft.topic,
-      draft.tweet,
+      draft.text,
+      draft.title,
+      draft.script ? JSON.stringify(draft.script) : null,
       draft.why_it_matters,
       JSON.stringify(draft.sources),
       draft.asset_request ? JSON.stringify(draft.asset_request) : null,
@@ -144,29 +157,50 @@ function saveDraft(db: Db, slotAt: Date, topic: RankedTopic, draft: DraftJson): 
   return Number(result.lastInsertRowid);
 }
 
+/** Groups fresh items into topics, or reuses the grouping of the same items made a few minutes ago. */
+async function topicsFor(deps: GeneratorDeps, candidates: readonly Candidate[], now: Date, cache?: ClusterCache): Promise<Topic[]> {
+  const key = candidates.map((c) => c.ref).sort().join(' ');
+  const cached = cache?.current;
+  if (cached && cached.key === key && now.getTime() - cached.at < CLUSTER_CACHE_MINUTES * 60_000) return cached.topics;
+  // Exclusions differ per network: they are applied after ranking, so one grouping serves every network.
+  const { topics, usage } = await clusterCandidates(deps.gateway, deps.config.mistral.models.cluster, candidates, [], now);
+  recordMistralUsage(deps.db, deps.config, usage, deps.now());
+  if (cache) cache.current = { key, at: now.getTime(), topics };
+  return topics;
+}
+
 /**
- * Produces the draft for one slot: skip if a draft is still pending, group fresh items into topics,
- * take the best-ranked one, and let Mistral verify and write, with up to maxAttempts tries.
- * With save=false (dry run) nothing is stored except spend and X data.
+ * Produces the draft of one network for one slot: skip if a draft of that network is still pending, group fresh
+ * items into topics, take the best-ranked one not used or excluded on that network, and let Mistral verify and write
+ * in the network's format, with up to maxAttempts tries. With save=false (dry run) nothing is stored except spend
+ * and X data.
  */
-export async function generateDraft(deps: GeneratorDeps, slotAt: Date, options: { save: boolean }): Promise<SlotOutcome> {
+export async function generateDraft(
+  deps: GeneratorDeps,
+  network: Network,
+  slotAt: Date,
+  options: { save: boolean; clusterCache?: ClusterCache },
+): Promise<SlotOutcome> {
   const { db, config } = deps;
   const attempts: AttemptReport[] = [];
+  const name = NETWORK_SPECS[network].name;
   try {
-    if (options.save && pendingDraftExists(db)) {
-      return { status: 'pending_draft', detail: 'Un brouillon attend encore une décision.', attempts };
+    if (options.save && pendingDraftExists(db, network)) {
+      return { status: 'pending_draft', detail: `A ${name} draft is still waiting for a decision.`, attempts };
     }
     const now = deps.now();
     assertBudget(db, config, 'mistral', now);
-    const candidates = gatherCandidates(db, now, config.generation.triggerMaxAgeHours);
-    if (candidates.length === 0) return { status: 'no_topic', detail: 'Aucun élément de moins de 24 h.', attempts };
+    const all = gatherCandidates(db, now, config.generation.triggerMaxAgeHours);
+    const available = gatherCandidates(db, now, config.generation.triggerMaxAgeHours, network);
+    if (available.length === 0) return { status: 'no_topic', detail: 'No item from the last 24 hours.', attempts };
 
-    const excluded = activeExcludedTopics(db, now);
-    const { topics, usage } = await clusterCandidates(deps.gateway, config.mistral.models.cluster, candidates, excluded, now);
-    recordMistralUsage(db, config, usage, deps.now());
-    const topic = rankTopics(topics, candidates, now)[0];
-    if (!topic) return { status: 'no_topic', detail: `Aucun sujet dans les piliers parmi ${candidates.length} éléments.`, attempts };
-    deps.log(`Sujet retenu : ${topic.label} (${topic.items.length} éléments, score ${topic.score.toFixed(2)})`);
+    const excluded = activeExcludedTopics(db, now, network);
+    const topics = await topicsFor(deps, all, now, options.clusterCache);
+    const topic = rankTopics(topics, available, now).find((t) => !excluded.some((e) => similarTopics(e, t.label)));
+    if (!topic) {
+      return { status: 'no_topic', detail: `No topic within the pillars among ${available.length} items.`, attempts };
+    }
+    deps.log(`${name}: topic "${topic.label}" (${topic.items.length} items, score ${topic.score.toFixed(2)})`);
 
     let feedback: string[] = [];
     // Single call first; two calls when Mistral refuses the combination or skips the web search.
@@ -176,20 +210,20 @@ export async function generateDraft(deps: GeneratorDeps, slotAt: Date, options: 
       let result: RawAttempt;
       const attemptMode = mode;
       try {
-        result = await draftOnce(deps, attemptMode, topic, excluded, feedback);
+        result = await draftOnce(deps, attemptMode, network, topic, excluded, feedback);
       } catch (error) {
         if (attemptMode !== 'single' || !requestRejected(error)) throw error;
-        deps.log(`Appel unique refusé par Mistral (${(error as Error).message.split('\n')[0]}) : passage à deux appels.`);
+        deps.log(`Mistral refused the single call (${(error as Error).message.split('\n')[0]}): switching to two calls.`);
         mode = 'two_step';
         attempt--;
         continue;
       }
       let validation = result.jsonParsed
         ? validateDraft(result.raw, {
+            network,
             references: result.references,
             trigger: topic.trigger,
             filter: deps.filter,
-            maxWeightedLength: config.generation.tweetMaxWeightedLength,
             maxTriggerAgeHours: config.generation.triggerMaxAgeHours,
             excludedTopics: excluded,
             now: deps.now(),
@@ -212,20 +246,21 @@ export async function generateDraft(deps: GeneratorDeps, slotAt: Date, options: 
         forbiddenHits: validation.ok ? [] : validation.forbiddenHits,
       });
       if (validation.ok) {
-        const id = options.save ? saveDraft(db, slotAt, topic, validation.draft) : undefined;
+        const id = options.save ? saveDraft(db, network, slotAt, topic, validation.draft) : undefined;
         const draft: ProposedDraft = {
           ...validation.draft,
           ...(id !== undefined ? { id } : {}),
-          weightedLength: validation.weightedLength,
+          network,
+          length: validation.length,
           triggerUrl: topic.trigger.url,
         };
         if (options.save) await deps.notifier.draftProposed(draft);
-        return { status: 'drafted', detail: `Brouillon prêt en ${attempt} tentative(s).`, topic, draft, attempts };
+        return { status: 'drafted', detail: `Draft ready after ${attempt} attempt(s).`, topic, draft, attempts };
       }
-      deps.log(`Tentative ${attempt} rejetée : ${validation.errors.join(' | ')}`);
+      deps.log(`${name}: attempt ${attempt} rejected: ${validation.errors.join(' | ')}`);
       feedback = validation.errors;
     }
-    const detail = `Échec après ${config.generation.maxAttempts} tentatives sur « ${topic.label} » : ${feedback.join(' | ')}`;
+    const detail = `${name}: failed after ${config.generation.maxAttempts} attempts on "${topic.label}": ${feedback.join(' | ')}`;
     await deps.notifier.alert(detail);
     return { status: 'failed', detail, topic, attempts };
   } catch (error) {

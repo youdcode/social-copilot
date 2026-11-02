@@ -24,7 +24,7 @@ function validDraft(overrides: Record<string, unknown> = {}) {
     slot_at: '2026-10-01T07:00:00.000Z',
     pillar: 'ai',
     topic: 'topic',
-    tweet: 'tweet',
+    text: 'text',
     why_it_matters: 'why',
     sources: '["https://example.com"]',
     trigger_kind: 'x_post',
@@ -37,9 +37,9 @@ function validDraft(overrides: Record<string, unknown> = {}) {
 }
 
 const insertDraft = `
-  INSERT INTO drafts (slot_at, pillar, topic, tweet, why_it_matters, sources, trigger_kind, trigger_ref,
+  INSERT INTO drafts (slot_at, pillar, topic, text, why_it_matters, sources, trigger_kind, trigger_ref,
                       trigger_url, trigger_published_at, prompt_version)
-  VALUES (@slot_at, @pillar, @topic, @tweet, @why_it_matters, @sources, @trigger_kind, @trigger_ref,
+  VALUES (@slot_at, @pillar, @topic, @text, @why_it_matters, @sources, @trigger_kind, @trigger_ref,
           @trigger_url, @trigger_published_at, @prompt_version)`;
 
 describe('database', () => {
@@ -88,7 +88,7 @@ describe('database', () => {
   test('refuses to open a database newer than the code', () => {
     const db = openDatabase(':memory:');
     db.pragma(`user_version = ${MIGRATIONS.length + 1}`);
-    assert.throws(() => migrate(db), /plus récente que ce code/);
+    assert.throws(() => migrate(db), /newer than this code/);
     db.close();
   });
 });

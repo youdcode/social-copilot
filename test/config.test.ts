@@ -25,7 +25,7 @@ describe('config', () => {
   });
 
   test('rejects a malformed slot', () => {
-    assert.throws(() => parseConfig(withChange((c) => (c.slots = ['9h']))), ConfigError);
+    assert.throws(() => parseConfig(withChange((c) => (c.networks.x.slots = ['9h']))), ConfigError);
   });
 
   test('rejects an unknown key, so a typo cannot go unnoticed', () => {
@@ -35,7 +35,7 @@ describe('config', () => {
   test('rejects a model with no price', () => {
     assert.throws(
       () => parseConfig(withChange((c) => (c.mistral.models.draft = 'unpriced-model'))),
-      /pas de tarif pour le modèle unpriced-model/,
+      /no price for model unpriced-model/,
     );
   });
 
@@ -57,6 +57,6 @@ describe('config', () => {
 
   test('resolves relative paths against the given root', () => {
     const config = parseConfig(committed, '/srv/app');
-    assert.equal(config.paths.database, '/srv/app/data/copilote.sqlite');
+    assert.equal(config.paths.database, '/srv/app/data/social-copilot.sqlite');
   });
 });
