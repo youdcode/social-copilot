@@ -116,13 +116,14 @@ When it is not worth replying, return an empty variants array.
 Use the id given for each post. Return only the JSON object, nothing else.`;
 }
 
-function ageMinutes(reply: Reply, now: Date): number | undefined {
+/** Minutes since the post was published, when its date is known. */
+export function replyAgeMinutes(reply: Reply, now: Date): number | undefined {
   if (!reply.postCreatedAt) return undefined;
   return Math.max(0, Math.round((now.getTime() - new Date(reply.postCreatedAt).getTime()) / 60_000));
 }
 
-function describeForAdvice(reply: Reply, now: Date): string {
-  const age = ageMinutes(reply, now);
+function describeForAdvice(reply: Reply, now: Date, note?: string): string {
+  const age = replyAgeMinutes(reply, now);
   const where =
     reply.origin === 'mention'
       ? 'a reply or mention received by the account'
@@ -133,6 +134,7 @@ function describeForAdvice(reply: Reply, now: Date): string {
     `[id ${reply.id}] ${where}${reply.author ? ` by @${reply.author}` : ''}${age !== undefined ? `, ${age} min old` : ''}`,
     ...(reply.parentText ? [`In reply to: "${reply.parentText.replace(/\s+/g, ' ')}"`] : []),
     `Text: "${(reply.postText ?? '').replace(/\s+/g, ' ')}"`,
+    ...(note ? [`Operator's note (not part of the post): ${note}`] : []),
   ].join('\n');
 }
 
@@ -141,7 +143,11 @@ function describeForAdvice(reply: Reply, now: Date): string {
  * the checks (X length, em dash, forbidden term) are dropped; a post worth a reply but left without any valid
  * variant is asked again, up to maxAttempts rounds. Stores the advice. Throws BudgetExceededError at the cap.
  */
-export async function adviseOnReplies(deps: AssistantDeps, replies: readonly Reply[]): Promise<void> {
+export async function adviseOnReplies(
+  deps: AssistantDeps,
+  replies: readonly Reply[],
+  notes: ReadonlyMap<number, string> = new Map(),
+): Promise<void> {
   const { db, config } = deps;
   const store = db.prepare(
     `UPDATE replies SET worth_replying = ?, worth_reason = ?, variants = ?, evaluated_at = ?, updated_at = ?
@@ -154,8 +160,9 @@ export async function adviseOnReplies(deps: AssistantDeps, replies: readonly Rep
     const now = deps.now();
     const user = pending
       .map((r) => {
-        const notes = feedback.get(r.id);
-        return notes ? `${describeForAdvice(r, now)}\nYour previous replies were rejected: ${notes.join(' ')}` : describeForAdvice(r, now);
+        const described = describeForAdvice(r, now, notes.get(r.id));
+        const rejected = feedback.get(r.id);
+        return rejected ? `${described}\nYour previous replies were rejected: ${rejected.join(' ')}` : described;
       })
       .join('\n\n');
     const result = await deps.gateway.completeJson({
@@ -209,37 +216,42 @@ const PROPOSED_WATCHLIST = `SELECT * FROM replies
     AND post_created_at >= ? ORDER BY post_created_at DESC`;
 
 /**
- * "À qui répondre": takes the fastest-moving recent posts of the watched accounts not reviewed yet, asks Mistral which
- * deserve a reply, and returns every open suggestion still fresh. Reads nothing from X: it works on stored posts.
+ * "À qui répondre": takes the fastest-moving recent posts of the watched accounts not taken yet, asks Mistral which
+ * deserve a reply (again for any left without advice by an earlier failure), and returns every open suggestion still
+ * fresh. Reads nothing from X: it works on stored posts.
  */
 export async function findReplyTargets(deps: AssistantDeps): Promise<{ reviewed: number; targets: Reply[] }> {
   const { db } = deps;
   const now = deps.now();
-  const reviewed = new Set(
-    db.prepare("SELECT x_post_id FROM replies WHERE origin = 'watchlist'").pluck().all() as string[],
-  );
+  const since = new Date(now.getTime() - TARGET_MAX_AGE_HOURS * 3_600_000).toISOString();
+  const taken = new Set(db.prepare("SELECT x_post_id FROM replies WHERE origin = 'watchlist'").pluck().all() as string[]);
   const fresh = gatherCandidates(db, now, TARGET_MAX_AGE_HOURS)
-    .filter((c) => c.kind === 'x_post' && !reviewed.has(c.sourceId))
+    .filter((c) => c.kind === 'x_post' && !taken.has(c.sourceId))
     .sort((a, b) => velocity(b) - velocity(a))
     .slice(0, TARGETS_PER_REVIEW);
 
+  // created_at is when the text was read from X: the 24 h purge counts from there, not from this review.
   const insert = db.prepare(
     `INSERT INTO replies (kind, origin, x_post_id, x_post_url, author_handle, post_text, post_created_at, created_at, updated_at)
      VALUES ('to_other', 'watchlist', ?, ?, ?, ?, ?, ?, ?)`,
   );
-  const ids = db.transaction(() =>
-    fresh.map((c) =>
-      Number(
-        insert.run(c.sourceId, c.url, c.label.replace(/^@/, ''), c.text, c.publishedAt.toISOString(), now.toISOString(), now.toISOString())
-          .lastInsertRowid,
-      ),
-    ),
-  )();
-  await adviseOnReplies(deps, ids.map((id) => getReply(db, id)!));
+  db.transaction(() => {
+    for (const c of fresh) {
+      insert.run(c.sourceId, c.url, c.label.replace(/^@/, ''), c.text, c.publishedAt.toISOString(), c.fetchedAt.toISOString(), now.toISOString());
+    }
+  })();
+  const unadvised = (
+    db
+      .prepare(
+        `SELECT * FROM replies WHERE origin = 'watchlist' AND evaluated_at IS NULL AND post_text IS NOT NULL
+           AND post_created_at >= ? ORDER BY id`,
+      )
+      .all(since) as ReplyRow[]
+  ).map(toReply);
+  await adviseOnReplies(deps, unadvised);
 
-  const since = new Date(now.getTime() - TARGET_MAX_AGE_HOURS * 3_600_000).toISOString();
   const targets = (db.prepare(PROPOSED_WATCHLIST).all(since) as ReplyRow[]).map(toReply);
-  return { reviewed: fresh.length, targets };
+  return { reviewed: unadvised.length, targets };
 }
 
 /**
@@ -278,13 +290,10 @@ export function parsePastedPost(message: string): PastedPost | undefined {
   };
 }
 
-/** Pasted text longer than this is taken as the post itself: no need to pay X to read it. */
-export const PASTED_TEXT_MIN_CHARS = 20;
-
 /**
- * A post pasted in the bot: its text (pasted, or read from X at the post price when only the link was sent), then
- * the advice and 3 variants. The text goes to replies, purged after 24 h, never to the chat history.
- * Throws BudgetExceededError at either cap.
+ * A post pasted in the bot: its text (pasted with /avis, or read from X at the post price for a link, the words around
+ * the link becoming a note to Mistral), then the advice and 3 variants. The text goes to replies, purged after 24 h,
+ * never to the chat history. Throws BudgetExceededError at either cap.
  */
 export async function advisePasted(
   deps: AssistantDeps & { x: XClient },
@@ -305,19 +314,15 @@ export async function advisePasted(
     postId = link.postId;
     url = link.url;
     author = link.handle;
-    if (link.rest.length >= PASTED_TEXT_MIN_CHARS) {
-      text = link.rest;
-    } else {
-      assertBudget(db, config, 'x', now);
-      if (affordableXResources(db, config, 'post', now) < 1) {
-        throw new BudgetExceededError('x', 'Budget X du jour insuffisant pour lire ce post.');
-      }
-      const post = await deps.x.lookupPost(link.postId);
-      if (!post) throw new Error("X ne renvoie pas ce post : supprimé, protégé, ou lien erroné. Colle son texte avec le lien.");
-      recordXReads(db, config, 'post', [post.id], now);
-      text = post.text;
-      createdAt = new Date(post.created_at).toISOString();
+    assertBudget(db, config, 'x', now);
+    if (affordableXResources(db, config, 'post', now) < 1) {
+      throw new BudgetExceededError('x', 'Budget X du jour insuffisant pour lire ce post.');
     }
+    const post = await deps.x.lookupPost(link.postId);
+    if (!post) throw new Error('X ne renvoie pas ce post : supprimé, protégé, ou lien erroné. Colle son texte avec /avis.');
+    recordXReads(db, config, 'post', [post.id], now);
+    text = post.text;
+    createdAt = new Date(post.created_at).toISOString();
   }
 
   const id = Number(
@@ -328,8 +333,8 @@ export async function advisePasted(
       )
       .run(postId, url, author, text, createdAt, now.toISOString(), now.toISOString()).lastInsertRowid,
   );
-  await adviseOnReplies(deps, [getReply(db, id)!]);
+  const note = 'link' in input && input.link.rest !== '' ? input.link.rest : undefined;
+  await adviseOnReplies(deps, [getReply(db, id)!], note ? new Map([[id, note]]) : undefined);
   return getReply(db, id)!;
 }
 
-export { ageMinutes as replyAgeMinutes };

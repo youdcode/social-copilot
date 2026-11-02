@@ -65,6 +65,14 @@ export const BOT_COMMANDS = [
   { command: 'help', description: 'Aide' },
 ];
 
+/**
+ * Acknowledges a click. Telegram refuses it for a click older than a few minutes (Mac asleep): that must never stop
+ * the handler after the database has changed.
+ */
+async function answer(ctx: Context, text?: string): Promise<void> {
+  await ctx.answerCallbackQuery(text ? { text } : undefined).catch(() => {});
+}
+
 /** Telegram refuses an edit that changes nothing; that is not an error here. */
 function unchanged(error: unknown): boolean {
   return error instanceof GrammyError && /message is not modified/i.test(error.description);
@@ -129,6 +137,9 @@ export function createBot(token: string, deps: BotDeps, options: { botInfo?: Use
     });
   };
 
+  /** X reads asked from the bot wait for the heartbeat: two reads never check the X budget at the same time. */
+  const withX = <T>(job: () => Promise<T>) => deps.state.generation.run(job);
+
   /** "Non": a new topic right away, queued behind any heartbeat so two drafts are never written at once. */
   const regenerate = () => {
     void deps.state.generation.run(async () => {
@@ -138,6 +149,8 @@ export function createBot(token: string, deps: BotDeps, options: { botInfo?: Use
         deps.log(`Nouveau sujet après refus : ${outcome.status} (${outcome.detail})`);
         if (outcome.status === 'no_topic') await say(`Pas d’autre sujet pour l’instant : ${outcome.detail}`);
         if (outcome.status === 'budget') await say(`⚠️ ${outcome.detail}`);
+        if (outcome.status === 'pending_draft') await say('Un autre brouillon attend déjà ta décision : pas de nouveau sujet pour l’instant.');
+        // 'failed' is alerted by the generator itself; 'drafted' arrives as a card.
       } catch (error) {
         deps.log(`Nouveau sujet impossible : ${(error as Error).message}`);
         await say(`⚠️ Nouveau sujet impossible : ${(error as Error).message}`).catch(() => {});
@@ -162,28 +175,28 @@ export function createBot(token: string, deps: BotDeps, options: { botInfo?: Use
     }
     background(async () => {
       const link = parsePastedPost(text);
-      await sendReplyCard(await advisePasted(deps, link ? { link } : { text }));
+      await sendReplyCard(await (link ? withX(() => advisePasted(deps, { link })) : advisePasted(deps, { text })));
     });
   });
 
   // Menus
 
   bot.callbackQuery('home', async (ctx) => {
-    await ctx.answerCallbackQuery();
+    await answer(ctx);
     await editCard(ctx.callbackQuery.message?.message_id, mainMenu(config));
   });
 
   bot.callbackQuery(/^net:(\w+)$/, async (ctx) => {
     if (ctx.match[1] !== 'x') {
-      await ctx.answerCallbackQuery({ text: 'Ce réseau n’est pas encore disponible.' });
+      await answer(ctx, 'Ce réseau n’est pas encore disponible.');
       return;
     }
-    await ctx.answerCallbackQuery();
+    await answer(ctx);
     await editCard(ctx.callbackQuery.message?.message_id, networkMenu(dailyStats(db, config, deps.now())));
   });
 
   bot.callbackQuery('x:pending', async (ctx) => {
-    await ctx.answerCallbackQuery();
+    await answer(ctx);
     const drafts = pendingDrafts(db);
     if (drafts.length === 0) {
       await say('Aucun brouillon en attente.');
@@ -193,7 +206,7 @@ export function createBot(token: string, deps: BotDeps, options: { botInfo?: Use
   });
 
   bot.callbackQuery('x:assets', async (ctx) => {
-    await ctx.answerCallbackQuery();
+    await answer(ctx);
     const requests = openAssetRequests(db);
     if (requests.length === 0) {
       await say('Aucune demande de visuel en cours.');
@@ -203,12 +216,12 @@ export function createBot(token: string, deps: BotDeps, options: { botInfo?: Use
   });
 
   bot.callbackQuery('x:chat', async (ctx) => {
-    await ctx.answerCallbackQuery();
+    await answer(ctx);
     await say(CHAT_HINT);
   });
 
   bot.callbackQuery('x:targets', async (ctx) => {
-    await ctx.answerCallbackQuery({ text: 'Je regarde les posts récents de la liste suivie…' });
+    await answer(ctx, 'Je regarde les posts récents de la liste suivie…');
     background(async () => {
       const { reviewed, targets } = await findReplyTargets(deps);
       for (const reply of targets) await sendReplyCard(reply);
@@ -222,16 +235,16 @@ export function createBot(token: string, deps: BotDeps, options: { botInfo?: Use
 
   bot.callbackQuery('x:mentions', async (ctx) => {
     if (!deps.xUser) {
-      await ctx.answerCallbackQuery();
+      await answer(ctx);
       await say(
         'Les réponses reçues demandent les jetons du compte : X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN et X_ACCESS_TOKEN_SECRET dans .env, puis relance le service.',
       );
       return;
     }
     const xUser = deps.xUser;
-    await ctx.answerCallbackQuery({ text: 'Je lis les réponses reçues…' });
+    await answer(ctx, 'Je lis les réponses reçues…');
     background(async () => {
-      await pollMentions(db, config, xUser, deps.now());
+      await withX(() => pollMentions(db, config, xUser, deps.now()));
       const { toAnswer, notWorth } = await receivedReplies(deps);
       for (const reply of toAnswer) await sendReplyCard(reply);
       await say(
@@ -250,46 +263,47 @@ export function createBot(token: string, deps: BotDeps, options: { botInfo?: Use
     const draft = getDraft(db, id);
     const cardMessage = ctx.callbackQuery.message?.message_id;
     if (!draft) {
-      await ctx.answerCallbackQuery({ text: 'Brouillon introuvable.' });
+      await answer(ctx, 'Brouillon introuvable.');
       return;
     }
     if (action === 'post') {
       if (!markPosted(db, config, id, deps.now())) {
-        await ctx.answerCallbackQuery({ text: 'Déjà traité.' });
+        await answer(ctx, 'Déjà traité.');
         return;
       }
-      await ctx.answerCallbackQuery({ text: 'Noté comme posté.' });
+      await answer(ctx, 'Noté comme posté.');
       await refreshDraftCard({ ...draft, telegramMessageId: cardMessage ?? draft.telegramMessageId });
       await ask('Publié. Réponds à ce message avec le lien du tweet pour l’enregistrer (facultatif).', 'posted_url', id, cardMessage);
       return;
     }
     if (action === 'edit') {
       if (draft.status !== 'proposed' && draft.status !== 'edited') {
-        await ctx.answerCallbackQuery({ text: 'Ce brouillon n’est plus en attente.' });
+        await answer(ctx, 'Ce brouillon n’est plus en attente.');
         return;
       }
-      await ctx.answerCallbackQuery();
+      await answer(ctx);
       await ask(`Consigne pour le brouillon n° ${id} ? Réponds à ce message, Mistral réécrit.`, 'edit', id, cardMessage);
       return;
     }
     // "Non": the status change is the guard. A click Telegram replays finds the draft refused and starts nothing.
     if (!refuseDraft(db, config, id, deps.now())) {
-      await ctx.answerCallbackQuery({ text: 'Déjà traité.' });
+      await answer(ctx, 'Déjà traité.');
       return;
     }
-    await ctx.answerCallbackQuery({ text: 'Refusé. Je cherche un autre sujet.' });
+    // Queued first: whatever Telegram does with the messages below, the new topic comes.
+    regenerate();
+    await answer(ctx, 'Refusé. Je cherche un autre sujet.');
     await refreshDraftCard({ ...draft, telegramMessageId: cardMessage ?? draft.telegramMessageId });
     await ask('Motif du refus ? Réponds à ce message (facultatif). Un autre sujet arrive.', 'refusal', id, cardMessage);
-    regenerate();
   });
 
   bot.callbackQuery(/^a:(\d+)$/, async (ctx) => {
     const id = Number(ctx.match[1]);
     if (!markAssetReady(db, id, deps.now())) {
-      await ctx.answerCallbackQuery({ text: 'Déjà noté.' });
+      await answer(ctx, 'Déjà noté.');
       return;
     }
-    await ctx.answerCallbackQuery({ text: 'Matière prête.' });
+    await answer(ctx, 'Matière prête.');
     await editCard(ctx.callbackQuery.message?.message_id, assetCard(getDraft(db, id)!));
     const draft = getDraft(db, id)!;
     if (draft.telegramMessageId !== ctx.callbackQuery.message?.message_id) await refreshDraftCard(draft);
@@ -300,14 +314,14 @@ export function createBot(token: string, deps: BotDeps, options: { botInfo?: Use
   bot.callbackQuery(/^r:(\d+):(done|skip)$/, async (ctx) => {
     const id = Number(ctx.match[1]);
     if (!settleReply(db, id, ctx.match[2] === 'done' ? 'replied' : 'skipped', deps.now())) {
-      await ctx.answerCallbackQuery({ text: 'Déjà traité.' });
+      await answer(ctx, 'Déjà traité.');
       return;
     }
-    await ctx.answerCallbackQuery();
+    await answer(ctx);
     await editCard(ctx.callbackQuery.message?.message_id, replyCard(getReply(db, id)!, deps.now(), copyMax));
   });
 
-  bot.on('callback_query:data', (ctx) => ctx.answerCallbackQuery());
+  bot.on('callback_query:data', (ctx) => answer(ctx));
 
   // Free messages
 
@@ -339,20 +353,26 @@ export function createBot(token: string, deps: BotDeps, options: { botInfo?: Use
       return true;
     }
     background(async () => {
-      const result = await rewriteDraft(deps, draft, text);
-      if (!result.ok) {
-        await say(`Le brouillon n° ${draft.id} reste tel quel : ${result.reason}`, messageId);
+      // Read again: an earlier instruction may have rewritten it, or a click settled it, while this one waited.
+      const current = getDraft(db, draft.id)!;
+      if (current.status !== 'proposed' && current.status !== 'edited') {
+        await say('Ce brouillon n’est plus en attente : réécriture abandonnée.', messageId);
         return;
       }
-      if (!replaceTweet(db, draft.id, result.tweet, deps.now())) {
+      const result = await rewriteDraft(deps, current, text);
+      if (!result.ok) {
+        await say(`Le brouillon n° ${current.id} reste tel quel : ${result.reason}`, messageId);
+        return;
+      }
+      if (!replaceTweet(db, current.id, result.tweet, deps.now())) {
         await say('Ce brouillon n’est plus en attente : réécriture abandonnée.', messageId);
         return;
       }
       // The old card keeps the old text without buttons; the new version comes as a fresh card, with a notification.
-      await editCard(draft.telegramMessageId, {
-        text: `${draftCard(draft, copyMax).text}\n\n✏️ Remplacé par la version modifiée ci-dessous.`,
+      await editCard(current.telegramMessageId, {
+        text: `${draftCard(current, copyMax).text}\n\n✏️ Remplacé par la version modifiée ci-dessous.`,
       });
-      await sendDraftCard(bot.api, chatId, db, config, draft.id, messageId);
+      await sendDraftCard(bot.api, chatId, db, config, current.id, messageId);
     });
     return true;
   };
@@ -368,7 +388,7 @@ export function createBot(token: string, deps: BotDeps, options: { botInfo?: Use
 
     const link = parsePastedPost(text);
     if (link) {
-      background(async () => sendReplyCard(await advisePasted(deps, { link })));
+      background(async () => sendReplyCard(await withX(() => advisePasted(deps, { link }))));
       return;
     }
     background(async () => {

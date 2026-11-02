@@ -24,6 +24,15 @@ function loaded(): boolean {
   return launchctl(['print', `${domain}/${LAUNCHD_LABEL}`], true) !== '';
 }
 
+/** Stops the running agent and waits until launchd has let it go (the bot takes a moment to stop polling). */
+function unload(): void {
+  if (!loaded()) return;
+  launchctl(['bootout', `${domain}/${LAUNCHD_LABEL}`], true);
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (let waited = 0; loaded() && waited < 30_000; waited += 500) Atomics.wait(pause, 0, 0, 500);
+  if (loaded()) throw new Error('Le service tourne encore après 30 s : réessaie dans un instant.');
+}
+
 const action = process.argv[2];
 
 if (process.platform !== 'darwin') {
@@ -38,14 +47,14 @@ if (action === 'install') {
   }
   mkdirSync(path.dirname(plistPath), { recursive: true });
   mkdirSync(path.join(PROJECT_ROOT, 'data', 'logs'), { recursive: true });
-  if (loaded()) launchctl(['bootout', `${domain}/${LAUNCHD_LABEL}`], true);
+  unload();
   writeFileSync(plistPath, launchAgentPlist({ node: process.execPath, projectRoot: PROJECT_ROOT }));
   launchctl(['bootstrap', domain, plistPath]);
   console.log(`Lancement automatique installé (${plistPath}).`);
   console.log(`Node utilisé : ${process.execPath}. Après une mise à jour de Node, relance npm run mac:install.`);
   console.log('Journaux : data/logs/service.log et data/logs/service.error.log.');
 } else if (action === 'uninstall') {
-  if (loaded()) launchctl(['bootout', `${domain}/${LAUNCHD_LABEL}`]);
+  unload();
   rmSync(plistPath, { force: true });
   console.log('Lancement automatique retiré, service arrêté.');
 } else if (action === 'status') {

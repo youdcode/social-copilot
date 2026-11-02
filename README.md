@@ -111,7 +111,7 @@ Envoie `/start` au bot.
 - **À qui répondre** : parmi les posts récents des comptes suivis, Mistral repère ceux qui valent une réponse et propose 3 variantes, chacune avec son bouton de copie. Une réponse porte surtout sur un post de moins d'une heure.
 - **Réponses reçues** : les réponses et mentions reçues par le compte, avec le post auquel elles répondent, un avis et 3 variantes. Le bot te prévient quand il y en a de nouvelles.
 - **Demandes de visuels** : type, brief et durée, avec un bouton « Matière prête ».
-- **Messages libres** : ils partent à Mistral, avec la voix du compte et le brouillon en cours ; `/reset` efface l'historique. Un lien de post X (`x.com/…/status/…`) déclenche l'avis et 3 variantes. Si tu colles aussi son texte, X n'est pas sollicité.
+- **Messages libres** : ils partent à Mistral, avec la voix du compte et le brouillon en cours ; `/reset` efface l'historique. Un lien de post X (`x.com/…/status/…`) déclenche l'avis et 3 variantes : le post est lu sur X (0,005 $), et les mots autour du lien servent de consigne. Pour un post sans lien, colle son texte après `/avis`.
 - **`/stats`** : posts publiés, réponses faites, dépenses face aux plafonds. **`/help`** : l'aide.
 
 Quatre créneaux par jour par défaut (9 h, 13 h, 17 h, 21 h, heure de Paris). Un créneau est sauté si un brouillon attend encore ta décision. Après une mise en veille, seul le créneau en cours est traité : les créneaux manqués ne s'empilent pas.

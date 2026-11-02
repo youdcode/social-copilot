@@ -1,7 +1,7 @@
 import { InlineKeyboard } from 'grammy';
 import type { AppConfig } from '../config.ts';
 import type { Draft } from '../drafts.ts';
-import type { Reply } from '../replies.ts';
+import { replyAgeMinutes, type Reply } from '../replies.ts';
 import type { DailyStats } from '../stats.ts';
 
 /** Telegram HTML: only &, < and > must be escaped in text; quotes too inside attributes. */
@@ -136,9 +136,7 @@ function quote(text: string, max = 600): string {
  * each with its own copy button when it fits. Open replies get Répondu and Ignorer.
  */
 export function replyCard(reply: Reply, now: Date, copyMax: number): Card {
-  const minutes = reply.postCreatedAt
-    ? Math.max(0, Math.round((now.getTime() - new Date(reply.postCreatedAt).getTime()) / 60_000))
-    : undefined;
+  const minutes = replyAgeMinutes(reply, now);
   const verdict =
     reply.worthReplying === null
       ? '❔ Pas d’avis de Mistral.'
@@ -230,7 +228,7 @@ export const HELP_TEXT = [
   'Copier, puis Posté une fois publié à la main. Modifier : réponds à la carte avec ta consigne. Non : motif facultatif, puis nouveau sujet.',
   '',
   '<b>Messages libres</b>',
-  'Tout message part à Mistral, avec la voix du compte et le brouillon en cours. Un lien de post X déclenche l’avis et 3 variantes.',
+  'Tout message part à Mistral, avec la voix du compte et le brouillon en cours. Un lien de post X déclenche l’avis et 3 variantes ; les mots autour du lien servent de consigne.',
   '',
   'Le service ne publie jamais rien : tout se poste à la main.',
 ].join('\n');

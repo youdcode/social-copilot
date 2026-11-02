@@ -26,13 +26,13 @@ const botInfo = {
 
 type ApiCall = { method: string; payload: Record<string, any> };
 
-function setup(gateway: MistralGateway = scriptedGateway({}).gateway) {
+function setup(gateway: MistralGateway = scriptedGateway({}).gateway, options: { failAnswers?: boolean } = {}) {
   const calls: ApiCall[] = [];
   let nextMessageId = 1000;
   const x: XClient = {
     lookupUsers: async () => ({ users: [], notFound: [] }),
     userPosts: async () => ({ posts: [] }),
-    lookupPost: async () => undefined,
+    lookupPost: async (id) => ({ id, text: 'Model 5 ships today at half the price', created_at: '2026-10-01T09:40:00Z' }),
   };
   const deps: BotDeps = {
     db: testDb(),
@@ -54,6 +54,9 @@ function setup(gateway: MistralGateway = scriptedGateway({}).gateway) {
   const bot = createBot('1:test', deps, { botInfo });
   bot.api.config.use(async (_prev, method, payload) => {
     calls.push({ method, payload: payload as Record<string, any> });
+    if (options.failAnswers && method === 'answerCallbackQuery') {
+      return { ok: false, error_code: 400, description: 'Bad Request: query is too old and response timeout expired' } as any;
+    }
     const result =
       method === 'sendMessage'
         ? { message_id: nextMessageId++, date: 0, chat: { id: CHAT, type: 'private' }, text: (payload as any).text }
@@ -161,6 +164,15 @@ describe('draft buttons', () => {
     assert.equal(getDraft(t.deps.db, id)!.refusalReason, 'trop vu');
   });
 
+  test('a late Non, whose click Telegram no longer accepts, still brings a new topic', async () => {
+    const t = setup(undefined, { failAnswers: true });
+    const id = insertDraft(t.deps.db, { telegram_message_id: 50 });
+    await t.click(`d:${id}:no`);
+    assert.equal(getDraft(t.deps.db, id)!.status, 'refused');
+    assert.equal(t.sent().filter((m) => /Pas d’autre sujet/.test(m.text)).length, 1);
+    assert.equal(t.sent().filter((m) => /Motif du refus/.test(m.text)).length, 1);
+  });
+
   test('Posté then the link of the published post', async () => {
     const t = setup();
     const id = insertDraft(t.deps.db, { telegram_message_id: 50 });
@@ -188,6 +200,23 @@ describe('draft buttons', () => {
   });
 });
 
+describe('edit instructions', () => {
+  test('two quick instructions: the second rewrites the result of the first, and edits its card', async () => {
+    const { gateway, jsonCalls } = scriptedGateway({
+      json: { tweet_rewrite: ['{"tweet":"First rewrite."}', '{"tweet":"Second rewrite."}'] },
+    });
+    const t = setup(gateway);
+    const id = insertDraft(t.deps.db, { telegram_message_id: 50 });
+    await t.message('plus court', { replyTo: 50 });
+    const firstCard = getDraft(t.deps.db, id)!.telegramMessageId!;
+    await t.message('avec une question', { replyTo: firstCard });
+    assert.match(jsonCalls[1]!.user, /Current tweet:\nFirst rewrite\./);
+    const edits = t.calls.filter((c) => c.method === 'editMessageText').map((c) => c.payload.message_id);
+    assert.deepEqual(edits, [50, firstCard]);
+    assert.equal(getDraft(t.deps.db, id)!.tweet, 'Second rewrite.');
+  });
+});
+
 describe('free messages', () => {
   test('go to Mistral, and the answer comes back', async () => {
     const { gateway, chatCalls } = scriptedGateway({ chat: ['Voici une idée.'] });
@@ -199,10 +228,12 @@ describe('free messages', () => {
 
   test('a link to an X post gets the advice and the variants, not a chat answer', async () => {
     const advice = JSON.stringify({ posts: [{ id: '1', worth_replying: true, reason: 'bon angle', variants: ['Fair point.'] }] });
-    const { gateway, chatCalls } = scriptedGateway({ json: { reply_advice: [advice] } });
+    const { gateway, chatCalls, jsonCalls } = scriptedGateway({ json: { reply_advice: [advice] } });
     const t = setup(gateway);
-    await t.message('https://x.com/lab/status/42 Model 5 ships today at half the price');
+    await t.message('ton avis ? https://x.com/lab/status/42');
     assert.equal(chatCalls.length, 0);
+    assert.match(jsonCalls[0]!.user, /Text: "Model 5 ships today at half the price"/);
+    assert.match(jsonCalls[0]!.user, /Operator's note \(not part of the post\): ton avis \?/);
     const card = t.sent().at(-1)!;
     assert.match(card.text, /Post collé/);
     assert.match(card.text, /Fair point\./);

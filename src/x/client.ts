@@ -71,7 +71,8 @@ export type XUserClient = {
     sinceId?: string;
     startTime?: Date;
     maxResults: number;
-  }): Promise<{ posts: XPost[]; referenced: XPost[]; newestId?: string }>;
+    paginationToken?: string;
+  }): Promise<{ posts: XPost[]; referenced: XPost[]; newestId?: string; nextToken?: string }>;
 };
 
 type XErrorBody = { title?: string; detail?: string; errors?: Array<{ message?: string; detail?: string }> };
@@ -208,14 +209,16 @@ export function createXUserClient(options: {
 
   return {
     accountId,
-    async mentions({ sinceId, startTime, maxResults }) {
+    async mentions({ sinceId, startTime, maxResults, paginationToken }) {
       const params: Record<string, string> = {
         max_results: String(Math.min(100, Math.max(5, maxResults))),
         expansions: 'referenced_tweets.id',
       };
       if (sinceId) params.since_id = sinceId;
       else if (startTime) params.start_time = isoSeconds(startTime);
-      const body = await api.getPosts<{ data?: XPost[]; includes?: { tweets?: XPost[] }; meta?: { newest_id?: string } }>(
+      if (paginationToken) params.pagination_token = paginationToken;
+      type Body = { data?: XPost[]; includes?: { tweets?: XPost[] }; meta?: { newest_id?: string; next_token?: string } };
+      const body = await api.getPosts<Body>(
         `/2/users/${encodeURIComponent(accountId)}/mentions`,
         params,
         'created_at,author_id,referenced_tweets',
@@ -224,6 +227,7 @@ export function createXUserClient(options: {
         posts: body.data ?? [],
         referenced: body.includes?.tweets ?? [],
         ...(body.meta?.newest_id ? { newestId: body.meta.newest_id } : {}),
+        ...(body.meta?.next_token ? { nextToken: body.meta.next_token } : {}),
       };
     },
   };

@@ -24,8 +24,12 @@ await runCli(async () => {
   const bot = createBot(telegram.TELEGRAM_BOT_TOKEN, deps);
   deps.notifier = createTelegramNotifier(bot.api, chatId, deps.db, deps.config, deps.log);
 
+  const allowedUpdates = ['message', 'callback_query'] as const;
   try {
     await bot.init();
+    // Another instance polling this bot (the Mac and a VPS at once) makes Telegram answer 409: find out before
+    // the service runs anything. Without an offset, nothing is confirmed, so no pending message is lost.
+    await bot.api.getUpdates({ limit: 1, timeout: 0, allowed_updates: [...allowedUpdates] });
     await bot.api.setMyCommands(BOT_COMMANDS);
   } catch (error) {
     base.release();
@@ -46,10 +50,10 @@ await runCli(async () => {
   process.on('SIGINT', () => void shutdown(0));
   process.on('SIGTERM', () => void shutdown(0));
 
-  // Long polling, messages and clicks only. A second instance polling the same bot makes Telegram answer 409.
+  // Long polling, messages and clicks only.
   void bot
     .start({
-      allowed_updates: ['message', 'callback_query'],
+      allowed_updates: [...allowedUpdates],
       onStart: (info) => deps.log(`Service démarré. Bot @${info.username} à l'écoute du chat autorisé.`),
     })
     .catch(async (error: unknown) => {

@@ -132,6 +132,21 @@ describe('findReplyTargets', () => {
     assert.equal((await findReplyTargets(d)).targets.length, 0);
     assert.equal(settleReply(d.db, first.targets[0]!.id, 'skipped', now), false);
   });
+
+  test('a post left without advice by a failure is reviewed on the next try; its text expires from its read time', async () => {
+    const d = deps(scriptedGateway({}).gateway);
+    seedWatchedPost(d.db, '11', 30, 500);
+    d.db.prepare("UPDATE x_posts SET fetched_at = '2026-10-01T09:00:00.000Z'").run();
+    d.gateway = scriptedGateway({ json: { reply_advice: ['not json'] } }).gateway;
+    assert.equal((await findReplyTargets(d)).targets.length, 0);
+    assert.equal(d.db.prepare('SELECT created_at FROM replies').pluck().get(), '2026-10-01T09:00:00.000Z');
+
+    const retry = scriptedGateway({ json: { reply_advice: [advice([{ id: 1, worth: true, variants: ['Nice.'] }])] } });
+    d.gateway = retry.gateway;
+    const second = await findReplyTargets(d);
+    assert.equal(second.reviewed, 1);
+    assert.deepEqual(second.targets.map((t) => t.postId), ['11']);
+  });
 });
 
 describe('pasted posts', () => {
@@ -145,7 +160,7 @@ describe('pasted posts', () => {
     assert.equal(parsePastedPost('no link here'), undefined);
   });
 
-  test('uses pasted text as is, and reads X only for a bare link', async () => {
+  test('reads a linked post from X, the words around the link being a note; /avis text needs no X', async () => {
     const lookups: string[] = [];
     const scripted = scriptedGateway({ json: { reply_advice: [advice([{ id: 1, worth: true, variants: ['A.'] }]), advice([{ id: 2, worth: true, variants: ['B.'] }])] } });
     const d = deps(scripted.gateway, {
@@ -154,16 +169,16 @@ describe('pasted posts', () => {
         return { id, text: 'Read from X', created_at: '2026-10-01T09:30:00Z' } satisfies XPost;
       },
     });
-    const withText = parsePastedPost('https://x.com/lab/status/42 Model 5 ships today at half the price')!;
-    const pasted = await advisePasted(d, { link: withText });
-    assert.equal(pasted.postText, 'Model 5 ships today at half the price');
-    assert.equal(lookups.length, 0);
-
-    const bare = await advisePasted(d, { link: parsePastedPost('https://x.com/lab/status/43')! });
+    const linked = await advisePasted(d, { link: parsePastedPost('what do you think? https://x.com/lab/status/43')! });
     assert.deepEqual(lookups, ['43']);
-    assert.equal(bare.postText, 'Read from X');
-    assert.equal(bare.postCreatedAt, '2026-10-01T09:30:00.000Z');
+    assert.equal(linked.postText, 'Read from X');
+    assert.equal(linked.postCreatedAt, '2026-10-01T09:30:00.000Z');
+    assert.match(scripted.jsonCalls[0]!.user, /Operator's note \(not part of the post\): what do you think\?/);
     assert.ok(spentToday(d.db, d.config, 'x', now) > 0);
+
+    const pasted = await advisePasted(d, { text: 'Model 5 ships today at half the price' });
+    assert.equal(pasted.postText, 'Model 5 ships today at half the price');
+    assert.equal(lookups.length, 1);
     assert.equal(d.db.prepare('SELECT count(*) FROM chat_messages').pluck().get(), 0);
   });
 });
@@ -204,6 +219,26 @@ describe('mentions', () => {
     await pollMentions(db, config, c, now);
     assert.equal(calls[1]!.sinceId, '9');
     assert.equal(db.prepare('SELECT count(*) FROM replies').pluck().get(), 1);
+  });
+
+  test('follows the next pages, and moves the cursor only once all were read', async () => {
+    const db = testDb();
+    const config = testConfig();
+    const pages = [
+      { posts: [{ id: '30', text: 'a', created_at: '2026-10-01T09:59:00Z', author_id: '5' }], newestId: '30', nextToken: 't2' },
+      { posts: [{ id: '29', text: 'b', created_at: '2026-10-01T09:58:00Z', author_id: '5' }], newestId: '29' },
+    ];
+    const tokens: Array<string | undefined> = [];
+    const c: XUserClient = {
+      accountId: me,
+      async mentions(options) {
+        tokens.push(options.paginationToken);
+        return { referenced: [], ...pages[tokens.length - 1]! };
+      },
+    };
+    assert.equal((await pollMentions(db, config, c, now)).newMentions, 2);
+    assert.deepEqual(tokens, [undefined, 't2']);
+    assert.equal(db.prepare("SELECT since_id FROM x_cursors WHERE stream = 'mentions'").pluck().get(), '30');
   });
 
   test('reads nothing when the budget cannot pay for a page', async () => {
