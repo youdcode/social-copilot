@@ -1,0 +1,30 @@
+# Service systemd pour un VPS dédié (Linux). Voir « Passer sur un VPS » dans le README.
+# Avant de l'activer : arrêter le service sur le Mac (npm run mac:uninstall). Un seul bot, une seule instance.
+#
+# Installation, en adaptant User et les chemins :
+#   sudo cp deploy/copilote-x.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now copilote-x
+# Journaux : journalctl -u copilote-x -f
+
+[Unit]
+Description=Copilote X (brouillons de posts proposés dans Telegram, rien n'est publié)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=copilote
+WorkingDirectory=/opt/copilote-x
+ExecStart=/usr/bin/node --env-file=.env src/cli/start.ts
+Restart=on-failure
+RestartSec=60
+# Le service n'écrit que dans data/ : le reste du système lui est fermé.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/copilote-x/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
