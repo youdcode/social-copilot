@@ -12,7 +12,7 @@ await runCli(async () => {
   try {
     const report = await runPoll(deps, createServiceState());
     console.log(
-      `Veille : X ${report.x ? `${report.x.newPosts} post(s) sur ${report.x.polled} compte(s)` : 'non lu'}, RSS ${report.rssNew} nouveau(x), HN ${report.hnNew} nouveau(x)`,
+      `Veille : X ${report.x ? `${report.x.newPosts} post(s) sur ${report.x.polled} compte(s)` : 'non lu'}, mentions ${report.mentions ?? 'non lues'}, RSS ${report.rssNew} nouveau(x), HN ${report.hnNew} nouveau(x)`,
     );
     report.problems.forEach((p) => console.log(`  ${p}`));
 

@@ -7,7 +7,23 @@ import { consoleNotifier } from '../notifier.ts';
 import { requireSecrets } from '../secrets.ts';
 import type { ServiceDeps } from '../service.ts';
 import { loadVoice } from '../voice.ts';
-import { createXClient } from '../x/client.ts';
+import { createXClient, createXUserClient, type XUserClient } from '../x/client.ts';
+
+const ACCOUNT_TOKENS = ['X_API_KEY', 'X_API_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_TOKEN_SECRET'] as const;
+
+/** The account's read-only tokens are optional: without any, mentions are not read; with only some, it is an error. */
+function accountClient(): XUserClient | undefined {
+  if (ACCOUNT_TOKENS.every((name) => !process.env[name]?.trim())) return undefined;
+  const tokens = requireSecrets(ACCOUNT_TOKENS);
+  return createXUserClient({
+    credentials: {
+      consumerKey: tokens.X_API_KEY,
+      consumerSecret: tokens.X_API_SECRET,
+      token: tokens.X_ACCESS_TOKEN,
+      tokenSecret: tokens.X_ACCESS_TOKEN_SECRET,
+    },
+  });
+}
 
 /** Builds everything the service needs. Fails fast, with a readable message, on any missing piece. */
 export function buildServiceDeps(): ServiceDeps & { release(): void } {
@@ -15,6 +31,7 @@ export function buildServiceDeps(): ServiceDeps & { release(): void } {
   const secrets = requireSecrets(['MISTRAL_API_KEY', 'X_BEARER_TOKEN']);
   const filter = loadForbiddenTerms(config.paths.forbiddenTerms);
   const voice = loadVoice(config.paths.voice);
+  const xUser = accountClient();
   const lock = acquireLock(config.paths.lock);
   const db = openDatabase(config.paths.database);
   return {
@@ -24,6 +41,7 @@ export function buildServiceDeps(): ServiceDeps & { release(): void } {
     voice,
     gateway: createMistralGateway(secrets.MISTRAL_API_KEY),
     x: createXClient({ bearerToken: secrets.X_BEARER_TOKEN }),
+    ...(xUser ? { xUser } : {}),
     notifier: consoleNotifier,
     now: () => new Date(),
     log: (message) => console.log(`${new Date().toISOString()} ${message}`),

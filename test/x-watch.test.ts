@@ -21,6 +21,9 @@ function fakeX(postsByUser: Record<string, XPost[]>) {
       const posts = options.sinceId ? [] : (postsByUser[userId] ?? []);
       return { posts, ...(posts[0] ? { newestId: posts[0].id } : {}) };
     },
+    async lookupPost() {
+      return undefined;
+    },
   };
   return { client, calls };
 }

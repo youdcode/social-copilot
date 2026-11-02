@@ -19,9 +19,11 @@
     "telegram:chat-id": "node --env-file=.env src/cli/telegram-chat-id.ts"
   },
   "dependencies": {
+    "@grammyjs/auto-retry": "2.0.2",
     "@mistralai/mistralai": "2.7.0",
     "better-sqlite3": "13.0.3",
     "fast-xml-parser": "5.11.1",
+    "grammy": "1.46.0",
     "node-cron": "4.6.0",
     "twitter-text": "3.1.0",
     "zod": "4.6.5"

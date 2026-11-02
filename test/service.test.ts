@@ -16,12 +16,18 @@ function makeDeps(clock: { now: Date }, options: { xCalls?: string[] } = {}) {
       options.xCalls?.push('posts');
       return { posts: [] };
     },
+    async lookupPost() {
+      return undefined;
+    },
   };
   const gateway: MistralGateway = {
     async completeJson() {
       throw new Error('should not be called without candidates');
     },
     async searchAndAnswer() {
+      throw new Error('should not be called without candidates');
+    },
+    async chat() {
       throw new Error('should not be called without candidates');
     },
   };
@@ -35,7 +41,7 @@ function makeDeps(clock: { now: Date }, options: { xCalls?: string[] } = {}) {
     gateway,
     filter: testFilter,
     voice: 'Test voice.',
-    notifier: { draftProposed: () => {}, alert: (m) => void alerts.push(m) },
+    notifier: { draftProposed: () => {}, alert: (m) => void alerts.push(m), notice: () => {} },
     x,
     fetch: fakeFetch({}),
     now: () => clock.now,

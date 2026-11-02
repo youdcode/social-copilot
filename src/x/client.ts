@@ -1,4 +1,9 @@
-/** Read-only client for the X API v2, with the app bearer token. Nothing in here can write to X. */
+import { oauth1Header, accountIdFromToken, type OAuth1Credentials } from './oauth1.ts';
+
+/**
+ * Read-only clients for the X API v2: one with the app bearer token, one with the account's own OAuth 1.0a tokens
+ * (app set to "Read only") for its mentions. Nothing in here can write to X: every request is a GET.
+ */
 
 export type XPublicMetrics = {
   like_count?: number;
@@ -15,6 +20,8 @@ export type XPost = {
   text: string;
   created_at: string;
   public_metrics?: XPublicMetrics;
+  author_id?: string;
+  referenced_tweets?: Array<{ type: string; id: string }>;
 };
 
 export type XUser = {
@@ -52,24 +59,48 @@ export type XClient = {
     userId: string,
     options: { sinceId?: string; startTime?: Date; maxResults: number; exclude: readonly string[] },
   ): Promise<{ posts: XPost[]; newestId?: string }>;
+  /** One post by id, for a link pasted in the bot. Undefined if X does not return it. */
+  lookupPost(postId: string): Promise<XPost | undefined>;
+};
+
+/** The account's own read-only tokens: its mentions, at the "Owned Reads" price. */
+export type XUserClient = {
+  /** Numeric id of the account the tokens belong to. */
+  readonly accountId: string;
+  mentions(options: {
+    sinceId?: string;
+    startTime?: Date;
+    maxResults: number;
+  }): Promise<{ posts: XPost[]; referenced: XPost[]; newestId?: string }>;
 };
 
 type XErrorBody = { title?: string; detail?: string; errors?: Array<{ message?: string; detail?: string }> };
 
-function describe(status: number, body: XErrorBody): string {
+function describe(status: number, body: XErrorBody, tokens: string): string {
   const detail = body.detail ?? body.errors?.map((e) => e.message ?? e.detail).join(' ; ') ?? body.title ?? '';
-  if (status === 401) return `X refuse le jeton (401) : vérifie X_BEARER_TOKEN dans .env. ${detail}`.trim();
+  if (status === 401) return `X refuse le jeton (401) : vérifie ${tokens} dans .env. ${detail}`.trim();
   if (status === 402) return `X refuse la requête faute de crédits (402). ${detail}`.trim();
   if (status === 403) return `X refuse l'accès (403). ${detail}`.trim();
   if (status === 429) return 'Limite de débit X atteinte (429).';
   return `Erreur X ${status}. ${detail}`.trim();
 }
 
-export function createXClient(options: {
-  bearerToken: string;
+function isoSeconds(date: Date): string {
+  return date.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+type Requester = {
+  get<T>(path: string, params: Record<string, string>): Promise<T>;
+  /** A GET that asks for post fields, under whichever parameter name X accepts. */
+  getPosts<T>(path: string, params: Record<string, string>, fields: string): Promise<T>;
+};
+
+function createRequester(options: {
+  authorize: (url: string) => string;
+  tokens: string;
   fetch?: typeof globalThis.fetch;
   baseUrl?: string;
-}): XClient {
+}): Requester {
   const doFetch = options.fetch ?? globalThis.fetch;
   const baseUrl = options.baseUrl ?? 'https://api.x.com';
   let fieldsParam: (typeof POST_FIELDS_PARAMS)[number] = POST_FIELDS_PARAMS[0];
@@ -77,16 +108,42 @@ export function createXClient(options: {
   async function get<T>(path: string, params: Record<string, string>): Promise<T> {
     const url = `${baseUrl}${path}?${new URLSearchParams(params)}`;
     const response = await doFetch(url, {
-      headers: { Authorization: `Bearer ${options.bearerToken}` },
+      headers: { Authorization: options.authorize(url) },
       signal: AbortSignal.timeout(30_000),
     });
     const body = (await response.json().catch(() => ({}))) as T & XErrorBody;
     if (!response.ok) {
       const reset = response.headers.get('x-rate-limit-reset');
-      throw new XApiError(response.status, describe(response.status, body), reset ? new Date(Number(reset) * 1000) : undefined);
+      throw new XApiError(
+        response.status,
+        describe(response.status, body, options.tokens),
+        reset ? new Date(Number(reset) * 1000) : undefined,
+      );
     }
     return body;
   }
+
+  return {
+    get,
+    async getPosts<T>(path: string, params: Record<string, string>, fields: string): Promise<T> {
+      const request = () => get<T>(path, { ...params, [fieldsParam]: fields });
+      try {
+        return await request();
+      } catch (error) {
+        if (!(error instanceof XApiError) || error.status !== 400 || !/fields/i.test(error.message)) throw error;
+        fieldsParam = POST_FIELDS_PARAMS.find((p) => p !== fieldsParam)!;
+        return request();
+      }
+    },
+  };
+}
+
+export function createXClient(options: {
+  bearerToken: string;
+  fetch?: typeof globalThis.fetch;
+  baseUrl?: string;
+}): XClient {
+  const api = createRequester({ ...options, authorize: () => `Bearer ${options.bearerToken}`, tokens: 'X_BEARER_TOKEN' });
 
   return {
     async lookupUsers(usernames) {
@@ -94,7 +151,7 @@ export function createXClient(options: {
       const notFound: string[] = [];
       for (let i = 0; i < usernames.length; i += 100) {
         const batch = usernames.slice(i, i + 100);
-        const body = await get<{ data?: XUser[]; errors?: Array<{ value?: string }> }>('/2/users/by', {
+        const body = await api.get<{ data?: XUser[]; errors?: Array<{ value?: string }> }>('/2/users/by', {
           usernames: batch.join(','),
           'user.fields': 'name,description,verified,verified_type,url,public_metrics',
         });
@@ -110,21 +167,64 @@ export function createXClient(options: {
       };
       if (exclude.length > 0) params.exclude = exclude.join(',');
       if (sinceId) params.since_id = sinceId;
-      else if (startTime) params.start_time = startTime.toISOString().replace(/\.\d{3}Z$/, 'Z');
+      else if (startTime) params.start_time = isoSeconds(startTime);
       const path = `/2/users/${encodeURIComponent(userId)}/tweets`;
-      type Body = { data?: XPost[]; meta?: { newest_id?: string } };
-      const request = () => get<Body>(path, { ...params, [fieldsParam]: 'created_at,public_metrics' });
-      let body: Body;
-      try {
-        body = await request();
-      } catch (error) {
-        const other = POST_FIELDS_PARAMS.find((p) => p !== fieldsParam)!;
-        if (!(error instanceof XApiError) || error.status !== 400 || !/fields/i.test(error.message)) throw error;
-        fieldsParam = other;
-        body = await request();
-      }
+      const body = await api.getPosts<{ data?: XPost[]; meta?: { newest_id?: string } }>(
+        path,
+        params,
+        'created_at,public_metrics',
+      );
       const posts = body.data ?? [];
       return { posts, ...(body.meta?.newest_id ? { newestId: body.meta.newest_id } : {}) };
+    },
+
+    async lookupPost(postId) {
+      const body = await api.getPosts<{ data?: XPost }>(
+        `/2/tweets/${encodeURIComponent(postId)}`,
+        {},
+        'created_at,public_metrics,author_id',
+      );
+      return body.data;
+    },
+  };
+}
+
+/**
+ * Client signed with the account's OAuth 1.0a tokens. They must be generated after the app was set to "Read only":
+ * a token keeps the access level the app had when it was generated.
+ */
+export function createXUserClient(options: {
+  credentials: OAuth1Credentials;
+  fetch?: typeof globalThis.fetch;
+  baseUrl?: string;
+}): XUserClient {
+  const accountId = accountIdFromToken(options.credentials.token);
+  if (!accountId) throw new Error("X_ACCESS_TOKEN n'a pas la forme attendue (<identifiant>-<jeton>).");
+  const api = createRequester({
+    ...options,
+    authorize: (url) => oauth1Header('GET', url, options.credentials),
+    tokens: 'X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN et X_ACCESS_TOKEN_SECRET',
+  });
+
+  return {
+    accountId,
+    async mentions({ sinceId, startTime, maxResults }) {
+      const params: Record<string, string> = {
+        max_results: String(Math.min(100, Math.max(5, maxResults))),
+        expansions: 'referenced_tweets.id',
+      };
+      if (sinceId) params.since_id = sinceId;
+      else if (startTime) params.start_time = isoSeconds(startTime);
+      const body = await api.getPosts<{ data?: XPost[]; includes?: { tweets?: XPost[] }; meta?: { newest_id?: string } }>(
+        `/2/users/${encodeURIComponent(accountId)}/mentions`,
+        params,
+        'created_at,author_id,referenced_tweets',
+      );
+      return {
+        posts: body.data ?? [],
+        referenced: body.includes?.tweets ?? [],
+        ...(body.meta?.newest_id ? { newestId: body.meta.newest_id } : {}),
+      };
     },
   };
 }

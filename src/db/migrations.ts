@@ -166,4 +166,26 @@ export const MIGRATIONS: readonly string[] = [
     last_run_at TEXT NOT NULL
   ) WITHOUT ROWID;
   `,
+  `
+  -- When the draft was marked posted (for /stats), and when its asset was delivered.
+  ALTER TABLE drafts ADD COLUMN posted_at TEXT;
+  ALTER TABLE drafts ADD COLUMN asset_ready_at TEXT;
+  CREATE INDEX drafts_telegram_message ON drafts (telegram_message_id);
+
+  -- Bot messages waiting for an answer: replying to one gives an edit instruction, a refusal reason or the posted URL.
+  CREATE TABLE bot_prompts (
+    message_id INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('edit', 'refusal', 'posted_url')),
+    draft_id INTEGER NOT NULL REFERENCES drafts (id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT ${now}
+  );
+
+  -- Replies: date of the post (a reply works best within the hour), the post it answers (purged with post_text),
+  -- when Mistral gave its advice, and the Telegram card.
+  ALTER TABLE replies ADD COLUMN post_created_at TEXT;
+  ALTER TABLE replies ADD COLUMN parent_post_text TEXT;
+  ALTER TABLE replies ADD COLUMN evaluated_at TEXT;
+  ALTER TABLE replies ADD COLUMN telegram_message_id INTEGER;
+  CREATE INDEX replies_origin_post ON replies (origin, x_post_id);
+  `,
 ];

@@ -37,6 +37,9 @@ function fakeGateway(drafts: unknown[]): MistralGateway & { searches: number } {
         usage: { ...usage, model: 'mistral-small-2603', connectorTokens: 0, webSearchCalls: 0 },
       };
     },
+    async chat(): Promise<never> {
+      throw new Error('the generator never chats');
+    },
     async searchAndAnswer(): Promise<SearchResult> {
       const next = drafts[Math.min(gateway.searches, drafts.length - 1)];
       gateway.searches++;
@@ -54,7 +57,11 @@ function fakeGateway(drafts: unknown[]): MistralGateway & { searches: number } {
 function deps(gateway: MistralGateway, change?: (c: any) => void) {
   const proposed: ProposedDraft[] = [];
   const alerts: string[] = [];
-  const notifier: Notifier = { draftProposed: (d) => void proposed.push(d), alert: (m) => void alerts.push(m) };
+  const notifier: Notifier = {
+    draftProposed: (d) => void proposed.push(d),
+    alert: (m) => void alerts.push(m),
+    notice: () => {},
+  };
   const db = testDb();
   seed(db);
   const d: GeneratorDeps = {
@@ -139,6 +146,7 @@ describe('generateDraft', () => {
     let jsonCalls = 0;
     const base = fakeGateway([goodDraft]);
     const gateway: MistralGateway = {
+      chat: base.chat,
       searchAndAnswer: async (o) => {
         if (o.jsonSchema) throw Object.assign(new Error('API error occurred: Status 400'), { statusCode: 400 });
         return { ...(await base.searchAndAnswer(o)), text: 'Facts: Model 5 shipped.' };
@@ -158,6 +166,7 @@ describe('generateDraft', () => {
     const base = fakeGateway([goodDraft]);
     const modes: string[] = [];
     const gateway: MistralGateway = {
+      chat: base.chat,
       searchAndAnswer: async (o) => {
         modes.push(o.jsonSchema ? 'single' : 'research');
         const result = await base.searchAndAnswer(o);
@@ -176,6 +185,7 @@ describe('generateDraft', () => {
     let jsonCalls = 0;
     const base = fakeGateway([goodDraft]);
     const gateway: MistralGateway = {
+      chat: base.chat,
       searchAndAnswer: async (o) => ({ ...(await base.searchAndAnswer(o)), text: 'Facts: Model 5 shipped.' }),
       completeJson: async (o) => {
         jsonCalls++;

@@ -4,6 +4,7 @@ import { migrate, openDatabase, schemaVersion } from '../src/db/database.ts';
 import { MIGRATIONS } from '../src/db/migrations.ts';
 
 const EXPECTED_TABLES = [
+  'bot_prompts',
   'chat_messages',
   'drafts',
   'excluded_topics',

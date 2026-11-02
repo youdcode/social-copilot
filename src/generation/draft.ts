@@ -153,6 +153,28 @@ export function similarTopics(a: string, b: string): boolean {
   return shared / Math.min(wa.size, wb.size) >= 0.6;
 }
 
+/**
+ * The checks a lone tweet or reply must pass: X length, no em dash, no forbidden term.
+ * Errors are phrased for the model and never name a forbidden term.
+ */
+export function checkTweetText(
+  text: string,
+  filter: ForbiddenTermsFilter,
+  maxWeightedLength: number,
+): { weightedLength: number; errors: string[] } {
+  const { weightedLength } = twitterText.parseTweet(text);
+  const errors: string[] = [];
+  if (text.trim() === '') errors.push('The text is empty.');
+  if (weightedLength > maxWeightedLength) {
+    errors.push(`The text is ${weightedLength} characters as X counts them; the limit is ${maxWeightedLength}.`);
+  }
+  if (text.includes('—')) errors.push('The text contains an em dash.');
+  if (filter.findInText(text).length > 0) {
+    errors.push('The text mentions a forbidden subject. Remove any personal or owner-related reference.');
+  }
+  return { weightedLength, errors };
+}
+
 export type ValidationContext = {
   references: readonly WebReference[];
   trigger: Candidate;

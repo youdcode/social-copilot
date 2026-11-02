@@ -2,10 +2,12 @@ import type { DraftJson } from './generation/draft.ts';
 
 export type ProposedDraft = DraftJson & { id?: number; weightedLength: number; triggerUrl: string };
 
-/** Where drafts and alerts go. The console for now; the Telegram bot plugs in here at step 4. */
+/** Where drafts, alerts and notices go: the Telegram bot when the service runs, the console for the dry run. */
 export type Notifier = {
   draftProposed(draft: ProposedDraft): Promise<void> | void;
   alert(message: string): Promise<void> | void;
+  /** Information that needs no action, such as new mentions. */
+  notice(message: string): Promise<void> | void;
 };
 
 export function formatDraftCard(draft: ProposedDraft): string {
@@ -32,5 +34,8 @@ export const consoleNotifier: Notifier = {
   },
   alert(message) {
     console.error(`[alerte] ${message}`);
+  },
+  notice(message) {
+    console.log(message);
   },
 };

@@ -17,7 +17,9 @@ export type SearchResult = {
 
 export type JsonResult = { text: string; usage: MistralUsage };
 
-/** The two kinds of Mistral calls the generator makes. Faked in tests. */
+export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
+
+/** The Mistral calls the service makes. Faked in tests. */
 export type MistralGateway = {
   searchAndAnswer(options: {
     model: string;
@@ -32,6 +34,8 @@ export type MistralGateway = {
     user: string;
     jsonSchema: JsonSchemaSpec;
   }): Promise<JsonResult>;
+  /** Free text, no tool, stateless: "Parler à Mistral". */
+  chat(options: { model: string; messages: readonly ChatMessage[] }): Promise<JsonResult>;
 };
 
 type Chunk = { type?: string; text?: string; url?: string | null; title?: string };
@@ -93,6 +97,24 @@ function responseFormat(spec: JsonSchemaSpec) {
   };
 }
 
+type ChatCompletion = Awaited<ReturnType<Mistral['chat']['complete']>>;
+
+function readCompletion(response: ChatCompletion, model: string): JsonResult {
+  const content = response.choices[0]?.message?.content;
+  const text =
+    typeof content === 'string' ? content : (content ?? []).map((chunk) => ('text' in chunk ? chunk.text : '')).join('');
+  return {
+    text,
+    usage: {
+      model,
+      promptTokens: response.usage.promptTokens ?? 0,
+      completionTokens: response.usage.completionTokens ?? 0,
+      connectorTokens: 0,
+      webSearchCalls: 0,
+    },
+  };
+}
+
 export function createMistralGateway(apiKey: string): MistralGateway {
   const client = new Mistral({ apiKey });
   return {
@@ -121,21 +143,16 @@ export function createMistralGateway(apiKey: string): MistralGateway {
         responseFormat: responseFormat(jsonSchema),
         temperature: 0.2,
       });
-      const content = response.choices[0]?.message?.content;
-      const text =
-        typeof content === 'string'
-          ? content
-          : (content ?? []).map((chunk) => ('text' in chunk ? chunk.text : '')).join('');
-      return {
-        text,
-        usage: {
-          model,
-          promptTokens: response.usage.promptTokens ?? 0,
-          completionTokens: response.usage.completionTokens ?? 0,
-          connectorTokens: 0,
-          webSearchCalls: 0,
-        },
-      };
+      return readCompletion(response, model);
+    },
+
+    async chat({ model, messages }) {
+      const response = await client.chat.complete({
+        model,
+        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+        temperature: 0.5,
+      });
+      return readCompletion(response, model);
     },
   };
 }

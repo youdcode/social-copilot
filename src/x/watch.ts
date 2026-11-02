@@ -118,8 +118,8 @@ export function purgeExpiredXText(db: Db, config: AppConfig, now: Date): number 
     .run(iso(now), cutoff).changes;
   const replies = db
     .prepare(
-      `UPDATE replies SET post_text = NULL, post_text_purged_at = ?
-       WHERE post_text IS NOT NULL AND created_at <= ?`,
+      `UPDATE replies SET post_text = NULL, parent_post_text = NULL, post_text_purged_at = ?
+       WHERE (post_text IS NOT NULL OR parent_post_text IS NOT NULL) AND created_at <= ?`,
     )
     .run(iso(now), cutoff).changes;
   return posts + replies;
@@ -127,13 +127,20 @@ export function purgeExpiredXText(db: Db, config: AppConfig, now: Date): number 
 
 /** Removes one post entirely (on request): its row, and its text wherever a reply quotes it. */
 export function purgeXPost(db: Db, postId: string, now: Date): { posts: number; replies: number } {
-  return db.transaction(() => ({
-    posts: db.prepare('DELETE FROM x_posts WHERE id = ?').run(postId).changes,
-    replies: db
+  return db.transaction(() => {
+    const posts = db.prepare('DELETE FROM x_posts WHERE id = ?').run(postId).changes;
+    const asPost = db
       .prepare(
         `UPDATE replies SET post_text = NULL, post_text_purged_at = ?
-         WHERE (x_post_id = ? OR parent_post_id = ?) AND post_text IS NOT NULL`,
+         WHERE x_post_id = ? AND post_text IS NOT NULL`,
       )
-      .run(iso(now), postId, postId).changes,
-  }))();
+      .run(iso(now), postId).changes;
+    const asParent = db
+      .prepare(
+        `UPDATE replies SET parent_post_text = NULL, post_text_purged_at = ?
+         WHERE parent_post_id = ? AND parent_post_text IS NOT NULL`,
+      )
+      .run(iso(now), postId).changes;
+    return { posts, replies: asPost + asParent };
+  })();
 }
