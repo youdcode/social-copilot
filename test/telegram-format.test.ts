@@ -69,6 +69,18 @@ describe('draftCard on other networks', () => {
     );
   });
 
+  test('a long video card sends the script ahead too, and always fits one message', () => {
+    const db = testDb();
+    const shot = { visual: 'v'.repeat(150), voiceover: 'w'.repeat(150), on_screen_text: 't'.repeat(30) };
+    const script = { hook: 'Hook', shots: Array.from({ length: 12 }, () => shot), duration_s: 90 };
+    const sources = JSON.stringify(Array.from({ length: 6 }, (_, i) => `https://example.com/${'p'.repeat(200)}/${i}`));
+    const id = insertDraft(db, { network: 'youtube', title: 'T'.repeat(90), text: 'd '.repeat(475), script: JSON.stringify(script), sources });
+    const card = draftCard(getDraft(db, id)!, 256);
+    assert.ok(card.text.length <= 4096, `card is ${card.text.length} characters`);
+    assert.ok(card.before!.every((part) => part.length <= 4096));
+    assert.match(card.text, /The script is in the message above/);
+  });
+
   test('a card too long for one Telegram message sends the text first, on its own', () => {
     const db = testDb();
     const id = insertDraft(db, { network: 'linkedin', text: 'word '.repeat(300).trim(), why_it_matters: 'x'.repeat(2600) });

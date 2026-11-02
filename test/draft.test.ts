@@ -121,6 +121,14 @@ describe('validateDraft on other networks', () => {
     assert.equal(validateDraft(draft({ title: 'Model 5', script: dashed }), youtube).ok, false);
   });
 
+  test('a script too long for a short video is sent back', () => {
+    const shot = { visual: 'v'.repeat(150), voiceover: 'w'.repeat(150), on_screen_text: 't'.repeat(30) };
+    const long = { hook: 'Hook', shots: Array.from({ length: 12 }, () => shot), duration_s: 60 };
+    const result = validateDraft(draft({ script: long }), context({ network: 'tiktok' }));
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.match(result.errors.join(), /The script is 3964 characters; keep it under 2500/);
+  });
+
   test('Instagram needs a visual; X does not accept a script', () => {
     assert.equal(validateDraft(draft(), context({ network: 'instagram' })).ok, false);
     const visual = { type: 'carousel', brief: 'Slide 1: the price cut. Slide 2: who it helps.', duration_s: 0 };

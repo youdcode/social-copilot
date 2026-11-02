@@ -87,28 +87,42 @@ export function draftCard(draft: Draft, copyMax: number): Card {
   const spec = NETWORK_SPECS[draft.network];
   const pending = draft.status === 'proposed' || draft.status === 'edited';
   const copyable = fitsCopyButton(draft.text, copyMax);
-  const body = copyable ? escapeHtml(draft.text) : `<pre>${escapeHtml(draft.text)}</pre>`;
-  const lines = (textBlock: string) => [
-    `<b>${spec.name} · draft #${draft.id}</b> · ${PILLAR_NAMES[draft.pillar]} · ${draft.length}/${spec.maxLength}`,
-    ...(statusLine(draft) ? [statusLine(draft)!] : []),
-    ...(draft.title ? ['', `<b>Title:</b> ${escapeHtml(draft.title)}`] : []),
-    '',
-    textBlock,
-    ...(draft.script ? ['', ...scriptLines(draft.script)] : []),
-    '',
-    `<b>Why:</b> ${escapeHtml(draft.whyItMatters)}`,
-    `<b>Sources:</b> ${draft.sources.map((s) => link(s, shortUrl(s))).join(' · ')}`,
-    `<b>Trigger:</b> ${link(draft.triggerUrl, shortUrl(draft.triggerUrl))}`,
-    ...(assetLine(draft) ? [assetLine(draft)!] : []),
-  ];
-  let text = lines(body).join('\n');
-  let before: string[] | undefined;
+  let textBlock = copyable ? escapeHtml(draft.text) : `<pre>${escapeHtml(draft.text)}</pre>`;
+  let scriptBlock = draft.script ? scriptLines(draft.script) : [];
+  let sources = draft.sources.map((s) => link(s, shortUrl(s))).join(' · ');
+  const build = () =>
+    [
+      `<b>${spec.name} · draft #${draft.id}</b> · ${PILLAR_NAMES[draft.pillar]} · ${draft.length}/${spec.maxLength}`,
+      ...(statusLine(draft) ? [statusLine(draft)!] : []),
+      ...(draft.title ? ['', `<b>Title:</b> ${escapeHtml(draft.title)}`] : []),
+      '',
+      textBlock,
+      ...(scriptBlock.length > 0 ? ['', ...scriptBlock] : []),
+      '',
+      `<b>Why:</b> ${escapeHtml(draft.whyItMatters)}`,
+      `<b>Sources:</b> ${sources}`,
+      `<b>Trigger:</b> ${link(draft.triggerUrl, shortUrl(draft.triggerUrl))}`,
+      ...(assetLine(draft) ? [assetLine(draft)!] : []),
+    ].join('\n');
+  // A card must fit in one Telegram message. What does not fit goes first, in messages of its own: the text, then the
+  // script; as a last resort, sources lose their links.
+  const before: string[] = [];
+  let text = build();
   if (text.length > MESSAGE_MAX) {
-    // A long post with a long script cannot share one message: the text goes first, on its own.
-    before = [`<pre>${escapeHtml(draft.text)}</pre>`];
-    text = lines(`<i>The ${spec.textName} is in the message above.</i>`).join('\n');
+    before.push(`<pre>${escapeHtml(draft.text)}</pre>`);
+    textBlock = `<i>The ${spec.textName} is in the message above.</i>`;
+    text = build();
   }
-  const card: Card = { text, ...(before ? { before } : {}) };
+  if (text.length > MESSAGE_MAX && draft.script) {
+    before.push(...splitMessage(scriptLines(draft.script).join('\n')));
+    scriptBlock = ['<i>The script is in the message above.</i>'];
+    text = build();
+  }
+  if (text.length > MESSAGE_MAX) {
+    sources = draft.sources.map((s) => escapeHtml(shortUrl(s))).join(' · ');
+    text = build();
+  }
+  const card: Card = { text, ...(before.length > 0 ? { before } : {}) };
   if (!pending) return card;
 
   const keyboard = new InlineKeyboard();

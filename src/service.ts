@@ -114,8 +114,9 @@ export async function runPoll(deps: ServiceDeps, state: ServiceState): Promise<P
 }
 
 /**
- * Runs, for each enabled network, its slot in progress if it was never handled: a slot is handled once, even across
- * sleep and restarts. Networks whose slots fall together share one grouping of the items into topics.
+ * Runs the slot in progress of the first enabled network whose slot was never handled: a slot is handled once, even
+ * across sleep and restarts. One network per heartbeat, so the purge and the bot never wait behind seven drafts; the
+ * others follow in the next minutes, sharing one grouping of the items into topics.
  */
 export async function runSlotsIfDue(
   deps: ServiceDeps,
@@ -149,6 +150,7 @@ export async function runSlotsIfDue(
     );
     deps.log(`${name} slot ${key}: ${outcome.status} (${outcome.detail})`);
     results.push({ network, outcome });
+    break;
   }
   return results;
 }

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { ForbiddenTermsFilter } from '../filters/forbidden-terms.ts';
 import { normalizeForMatching } from '../filters/forbidden-terms.ts';
 import type { WebReference, JsonSchemaSpec } from '../mistral/gateway.ts';
-import { graphemeLength, MAX_TITLE_LENGTH, MAX_VIDEO_SECONDS, NETWORK_SPECS, type Network } from '../networks.ts';
+import { graphemeLength, MAX_SCRIPT_LENGTH, MAX_TITLE_LENGTH, MAX_VIDEO_SECONDS, NETWORK_SPECS, type Network } from '../networks.ts';
 import { hoursBetween } from '../time.ts';
 import type { Candidate } from './candidates.ts';
 import type { RankedTopic } from './rank.ts';
@@ -248,7 +248,13 @@ export function checkContent(
   }
   if (spec.video) {
     if (!content.script) errors.push('The script is missing.');
-    else if (content.script.duration_s > MAX_VIDEO_SECONDS) errors.push(`The video lasts more than ${MAX_VIDEO_SECONDS} seconds.`);
+    else {
+      if (content.script.duration_s > MAX_VIDEO_SECONDS) errors.push(`The video lasts more than ${MAX_VIDEO_SECONDS} seconds.`);
+      const scriptLength = scriptStrings(content.script).reduce((total, s) => total + graphemeLength(s), 0);
+      if (scriptLength > MAX_SCRIPT_LENGTH) {
+        errors.push(`The script is ${scriptLength} characters; keep it under ${MAX_SCRIPT_LENGTH}, with fewer or shorter shots.`);
+      }
+    }
   }
   if ([content.text, content.title ?? '', ...scriptStrings(content.script)].some((t) => t.includes('—'))) {
     errors.push('The text contains an em dash.');

@@ -57,7 +57,15 @@ export function createTelegramNotifier(
     async draftProposed(draft) {
       if (draft.id === undefined) return;
       const id = draft.id;
-      await safely(`draft #${id}`, () => sendDraftCard(api, chatId, db, config, id));
+      try {
+        await sendDraftCard(api, chatId, db, config, id);
+      } catch (error) {
+        // The draft stays pending and blocks its network's next slots: the operator must know it exists.
+        log(`Telegram send failed (draft #${id}): ${(error as Error).message}`);
+        await safely('alert', () =>
+          api.sendMessage(chatId, `⚠️ Draft #${id} could not be shown (${(error as Error).message}). Try "Pending drafts".`),
+        );
+      }
     },
     async alert(message) {
       await safely('alert', () => api.sendMessage(chatId, `⚠️ ${message}`));

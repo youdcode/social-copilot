@@ -63,8 +63,9 @@ describe('runSlotsIfDue', () => {
     const { deps } = makeDeps(clock, { networks: { x: ['09:00', '13:00'], linkedin: ['08:30'] } });
     const state = createServiceState();
     const statuses = async () => (await runSlotsIfDue(deps, state)).map((r) => `${r.network}:${r.outcome.status}`);
-    assert.deepEqual(await statuses(), ['x:no_topic', 'linkedin:no_topic']);
+    assert.deepEqual(await statuses(), ['x:no_topic']);
     clock.now = new Date('2026-10-01T07:06:00Z');
+    assert.deepEqual(await statuses(), ['linkedin:no_topic']);
     assert.deepEqual(await statuses(), []);
     clock.now = new Date('2026-10-01T11:00:30Z');
     assert.deepEqual(await statuses(), ['x:no_topic']);

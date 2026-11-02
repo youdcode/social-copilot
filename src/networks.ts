@@ -36,6 +36,8 @@ export function xLength(text: string): number {
 }
 
 export const MAX_VIDEO_SECONDS = 90;
+/** Characters of a whole video script (hook and shots): what fits in a short video, and in a Telegram message. */
+export const MAX_SCRIPT_LENGTH = 2500;
 export const MAX_TITLE_LENGTH = 100;
 
 export const NETWORK_SPECS: Record<Network, NetworkSpec> = {

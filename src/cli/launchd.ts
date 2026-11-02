@@ -8,6 +8,7 @@ import { LAUNCHD_LABEL, launchAgentPlist } from '../deploy/launchd.ts';
 // Automatic start on the Mac: npm run mac:install | mac:uninstall | mac:status.
 // The Mac and a VPS must never run together: one bot, one instance (see the README runbook).
 
+const LEGACY_LABEL = 'local.copilote-x';
 const plistPath = path.join(os.homedir(), 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`);
 const domain = `gui/${process.getuid?.() ?? 501}`;
 
@@ -48,6 +49,9 @@ if (action === 'install') {
   mkdirSync(path.dirname(plistPath), { recursive: true });
   mkdirSync(path.join(PROJECT_ROOT, 'data', 'logs'), { recursive: true });
   unload();
+  // An agent installed under the project's former name would run a second bot: it goes too.
+  launchctl(['bootout', `${domain}/${LEGACY_LABEL}`], true);
+  rmSync(path.join(os.homedir(), 'Library', 'LaunchAgents', `${LEGACY_LABEL}.plist`), { force: true });
   writeFileSync(plistPath, launchAgentPlist({ node: process.execPath, projectRoot: PROJECT_ROOT }));
   launchctl(['bootstrap', domain, plistPath]);
   console.log(`Automatic start installed (${plistPath}).`);

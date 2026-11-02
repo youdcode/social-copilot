@@ -253,4 +253,38 @@ describe('several networks', () => {
     const row = d.db.prepare('SELECT title, script FROM drafts').get() as { title: string; script: string };
     assert.equal(JSON.parse(row.script).duration_s, 30);
   });
+
+  test('a draft that lands on a topic already covered moves on to the next topic', async () => {
+    const searches: string[] = [];
+    const twoTopics = JSON.stringify({
+      topics: [
+        { label: 'Lab releases Model 5', pillar: 'ai', item_refs: ['x:9001'] },
+        { label: 'Tool ships version 2', pillar: 'devtools', item_refs: ['x:9002'] },
+      ],
+    });
+    const second = { ...goodDraft, topic: 'Tool ships version 2', sources: ['https://x.com/lab/status/9002'] };
+    const base = fakeGateway([{ ...goodDraft, topic: 'Model 5 launch day news' }, second]);
+    const gateway: MistralGateway = {
+      ...base,
+      completeJson: async () => ({ text: twoTopics, usage }),
+      searchAndAnswer: async (o) => {
+        searches.push(o.input.split('\n')[0]!);
+        return base.searchAndAnswer(o);
+      },
+    };
+    const { d } = deps(gateway);
+    d.db
+      .prepare(
+        `INSERT INTO x_posts (id, author_id, url, posted_at, fetched_at, text, public_metrics)
+         VALUES ('9002', '100', 'https://x.com/lab/status/9002', '2026-10-01T09:10:00.000Z', '2026-10-01T09:30:00.000Z',
+                 'Tool 2 is out.', '{"like_count":5}')`,
+      )
+      .run();
+    d.db
+      .prepare("INSERT INTO excluded_topics (topic, reason, excluded_until, network) VALUES ('Model 5 launch day news', 'posted', '2026-10-08T00:00:00Z', 'x')")
+      .run();
+    const outcome = await generateDraft(d, 'x', slot, { save: false });
+    assert.equal(outcome.status, 'drafted');
+    assert.deepEqual(searches, ['Topic: Lab releases Model 5', 'Topic: Tool ships version 2']);
+  });
 });

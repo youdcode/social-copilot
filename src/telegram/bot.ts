@@ -210,7 +210,8 @@ export function createBot(token: string, deps: BotDeps, options: { botInfo?: Use
   });
 
   bot.callbackQuery(/^pend:(\w+)$/, async (ctx) => {
-    const network = clickedNetwork(ctx.match[1]);
+    // A network switched off may still hold pending drafts: they stay reachable.
+    const network = isNetwork(ctx.match[1]!) ? ctx.match[1] : undefined;
     await answer(ctx);
     if (!network) return;
     const drafts = pendingDrafts(db, network);

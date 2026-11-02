@@ -69,6 +69,9 @@ export function pendingDraftExists(db: Db, network: Network = 'x'): boolean {
 }
 
 /** Topics grouped from one set of items, reused while the items are the same: networks sharing a slot pay once. */
+/** Start of the validation error for a topic already posted or refused (see validateDraft). */
+const ALREADY_COVERED = 'This topic was already posted or refused recently';
+
 export type ClusterCache = { current?: { key: string; at: number; topics: Topic[] } };
 export const CLUSTER_CACHE_MINUTES = 20;
 
@@ -196,7 +199,8 @@ export async function generateDraft(
 
     const excluded = activeExcludedTopics(db, now, network);
     const topics = await topicsFor(deps, all, now, options.clusterCache);
-    const topic = rankTopics(topics, available, now).find((t) => !excluded.some((e) => similarTopics(e, t.label)));
+    const ranked = rankTopics(topics, available, now).filter((t) => !excluded.some((e) => similarTopics(e, t.label)));
+    let topic = ranked.shift();
     if (!topic) {
       return { status: 'no_topic', detail: `No topic within the pillars among ${available.length} items.`, attempts };
     }
@@ -259,6 +263,14 @@ export async function generateDraft(
       }
       deps.log(`${name}: attempt ${attempt} rejected: ${validation.errors.join(' | ')}`);
       feedback = validation.errors;
+      // The draft turned out to cover a topic already posted or refused, under another label: try the next topic
+      // rather than asking again about this one.
+      const next = ranked[0];
+      if (validation.errors.some((e) => e.startsWith(ALREADY_COVERED)) && next) {
+        topic = ranked.shift()!;
+        feedback = [];
+        deps.log(`${name}: topic already covered, moving on to "${topic.label}"`);
+      }
     }
     const detail = `${name}: failed after ${config.generation.maxAttempts} attempts on "${topic.label}": ${feedback.join(' | ')}`;
     await deps.notifier.alert(detail);
