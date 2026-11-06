@@ -70,6 +70,8 @@ npm run check   # types + tests, without any network call
 cp .env.example .env
 ```
 
+`npm ci` may warn that install scripts of `better-sqlite3` and `core-js` were not run. Nothing is missing: `better-sqlite3` ships prebuilt binaries for macOS, Linux and Windows, and `npm run check` confirms it loads.
+
 ### 2. Mistral
 
 1. Create an API key in an organization or workspace dedicated to the project, and put it in `.env` as `MISTRAL_API_KEY`.
