@@ -14,7 +14,8 @@ import { pollMentions } from './x/mentions.ts';
 import { pollWatchedAccounts, purgeExpiredXText, resolveWatchedAccounts, type PollResult } from './x/watch.ts';
 
 export type ServiceDeps = GeneratorDeps & {
-  x: XClient;
+  /** The app token client for the X watch. Absent: the watch reads RSS feeds and Hacker News only. */
+  x?: XClient;
   /** The account's own read-only tokens, for its mentions. Absent: mentions are not read. */
   xUser?: XUserClient;
   fetch?: typeof globalThis.fetch;
@@ -71,17 +72,19 @@ export async function runPoll(deps: ServiceDeps, state: ServiceState): Promise<P
   const now = deps.now();
   const report: PollReport = { x: null, mentions: null, rssNew: 0, hnNew: 0, problems: [] };
 
-  try {
-    assertBudget(db, config, 'x', now);
-    const { notFound } = await resolveWatchedAccounts(db, config, deps.x, now);
-    if (notFound.length > 0) report.problems.push(`X accounts not found: ${notFound.join(', ')}`);
-    report.x = await pollWatchedAccounts(db, config, deps.x, now);
-    if (report.x.stoppedByBudget) {
-      await alertBudgetOnce(deps, state, 'x', `Daily X cap reached ($${config.x.dailyCapUsd} incl. VAT): X reads stop until midnight UTC.`);
+  if (deps.x) {
+    try {
+      assertBudget(db, config, 'x', now);
+      const { notFound } = await resolveWatchedAccounts(db, config, deps.x, now);
+      if (notFound.length > 0) report.problems.push(`X accounts not found: ${notFound.join(', ')}`);
+      report.x = await pollWatchedAccounts(db, config, deps.x, now);
+      if (report.x.stoppedByBudget) {
+        await alertBudgetOnce(deps, state, 'x', `Daily X cap reached ($${config.x.dailyCapUsd} incl. VAT): X reads stop until midnight UTC.`);
+      }
+    } catch (error) {
+      if (error instanceof BudgetExceededError) await alertBudgetOnce(deps, state, 'x', error.message);
+      else report.problems.push(`X: ${(error as Error).message}`);
     }
-  } catch (error) {
-    if (error instanceof BudgetExceededError) await alertBudgetOnce(deps, state, 'x', error.message);
-    else report.problems.push(`X: ${(error as Error).message}`);
   }
 
   if (deps.xUser) {

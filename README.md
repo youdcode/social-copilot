@@ -2,7 +2,9 @@
 
 A service that follows tech news, drafts posts for your social accounts and proposes them in a private Telegram bot. **It never publishes anything**: you read, copy and post by hand from each app.
 
-- **Watch**: chosen X accounts (official API, read only), RSS feeds and Hacker News.
+> **Status: early version.** Every part is covered by tests, with Mistral, X and Telegram faked, but the service has not run against the live APIs yet. Expect rough edges on a first install, and please open an issue when something breaks.
+
+- **Watch**: RSS feeds and Hacker News, plus chosen X accounts if you give it X API keys (official API, read only).
 - **Writing**: Mistral checks the topic with a web search, then writes in English, in the voice you defined, in the format of each network.
 - **Checks in code** before anything reaches you:
   - real sources;
@@ -50,9 +52,9 @@ Sources are the same for every network. The same news can go out on several netw
 ## Requirements
 
 - macOS or Linux, with **Node 24 LTS** (see `.node-version` and `.nvmrc`). `npm install` refuses any other version.
-- An X developer account on pay-per-use, with credits.
 - A Mistral API key, ideally in an organization of its own.
 - A Telegram account.
+- Optional: an X developer account on pay-per-use, with credits, to watch X accounts and use the reply features. Without it, the watch reads RSS feeds and Hacker News only, and drafts are still written for every network.
 
 > Do not put the project in a folder synced by iCloud (Desktop, Documents). macOS swaps rarely used files for online placeholders there, which makes Node hang at start and puts `.env` and the SQLite database in the cloud. A folder like `~/dev` is fine.
 
@@ -77,7 +79,9 @@ cp .env.example .env
 
 Conversations are opened with `store: false`. Models are pinned in `config/config.json` (never a `-latest` alias).
 
-### 3. X
+### 3. X (optional)
+
+Skip this step to start without X: leave the X variables of `.env` empty. You can add them later and restart.
 
 On [console.x.com](https://console.x.com), signed in with the account that will publish:
 
@@ -89,7 +93,7 @@ On [console.x.com](https://console.x.com), signed in with the account that will 
 4. Add credits, set a spending cap and turn off automatic top-up.
 5. In the use case description, mention processing by an LLM and local storage.
 
-The four account tokens are optional: without them, everything works except "Replies received".
+With the Bearer Token alone, the X watch, "Who to reply to" and pasted links work. The four account tokens add "Replies received".
 
 ### 4. Telegram
 
@@ -120,7 +124,7 @@ In `config/config.json`:
 
 The file is checked at start: an unknown key or an out-of-range value is refused, with a message naming it.
 
-Then resolve the ids of the watched accounts, once and for all ($0.01 per account):
+With X keys, resolve the ids of the watched accounts, once and for all ($0.01 per account):
 
 ```sh
 npm run x:resolve

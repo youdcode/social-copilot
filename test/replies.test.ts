@@ -183,6 +183,15 @@ describe('pasted posts', () => {
   });
 });
 
+describe('pasted posts without X', () => {
+  test('a link needs the X token; pasted text does not', async () => {
+    const scripted = scriptedGateway({ json: { reply_advice: [advice([{ id: 1, worth: true, variants: ['A.'] }])] } });
+    const { x: _x, ...withoutX } = deps(scripted.gateway);
+    await assert.rejects(advisePasted(withoutX, { link: parsePastedPost('https://x.com/lab/status/43')! }), /X_BEARER_TOKEN/);
+    assert.equal((await advisePasted(withoutX, { text: 'Model 5 ships today' })).worthReplying, true);
+  });
+});
+
 describe('mentions', () => {
   const me = '777';
   function client(posts: XPost[], referenced: XPost[] = []) {

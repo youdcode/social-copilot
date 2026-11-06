@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import type { MistralGateway } from '../src/mistral/gateway.ts';
-import { createServiceState, runSlotsIfDue, tick, type ServiceDeps } from '../src/service.ts';
+import { createServiceState, runPoll, runSlotsIfDue, tick, type ServiceDeps } from '../src/service.ts';
 import type { XClient } from '../src/x/client.ts';
 import { fakeFetch, testConfig, testDb, testFilter } from './helpers.ts';
 
@@ -98,5 +98,16 @@ describe('tick', () => {
     clock.now = new Date('2026-10-01T07:40:00Z');
     await tick(deps, state);
     assert.equal(alerts.filter((a) => a.includes('X')).length, 1);
+  });
+
+  test('without X tokens, the watch reads RSS and Hacker News only', async () => {
+    const clock = { now: new Date('2026-10-01T07:05:00Z') };
+    const xCalls: string[] = [];
+    const { deps } = makeDeps(clock, { xCalls });
+    delete deps.x;
+    const report = await runPoll(deps, createServiceState());
+    assert.deepEqual(xCalls, []);
+    assert.equal(report.x, null);
+    assert.deepEqual(report.problems, []);
   });
 });

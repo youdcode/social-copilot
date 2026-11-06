@@ -243,6 +243,11 @@ export function createBot(token: string, deps: BotDeps, options: { botInfo?: Use
   });
 
   bot.callbackQuery('targets', async (ctx) => {
+    if (!deps.x) {
+      await answer(ctx);
+      await say('Who to reply to needs the X watch: put X_BEARER_TOKEN in .env, then restart the service.');
+      return;
+    }
     await answer(ctx, 'Looking at recent posts of the watched accounts…');
     background(async () => {
       const { reviewed, targets } = await findReplyTargets(deps);

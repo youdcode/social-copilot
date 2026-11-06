@@ -28,7 +28,9 @@ function accountClient(): XUserClient | undefined {
 /** Builds everything the service needs. Fails fast, with a readable message, on any missing piece. */
 export function buildServiceDeps(): ServiceDeps & { release(): void } {
   const config = loadConfig();
-  const secrets = requireSecrets(['MISTRAL_API_KEY', 'X_BEARER_TOKEN']);
+  const secrets = requireSecrets(['MISTRAL_API_KEY']);
+  // X is optional: without its app token, the watch reads RSS feeds and Hacker News only.
+  const bearerToken = process.env.X_BEARER_TOKEN?.trim();
   const filter = loadForbiddenTerms(config.paths.forbiddenTerms);
   const voice = loadVoice(config.paths.voice);
   const xUser = accountClient();
@@ -40,7 +42,7 @@ export function buildServiceDeps(): ServiceDeps & { release(): void } {
     filter,
     voice,
     gateway: createMistralGateway(secrets.MISTRAL_API_KEY),
-    x: createXClient({ bearerToken: secrets.X_BEARER_TOKEN }),
+    ...(bearerToken ? { x: createXClient({ bearerToken }) } : {}),
     ...(xUser ? { xUser } : {}),
     notifier: consoleNotifier,
     now: () => new Date(),

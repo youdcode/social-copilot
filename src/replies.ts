@@ -296,7 +296,7 @@ export function parsePastedPost(message: string): PastedPost | undefined {
  * never to the chat history. Throws BudgetExceededError at either cap.
  */
 export async function advisePasted(
-  deps: AssistantDeps & { x: XClient },
+  deps: AssistantDeps & { x?: XClient },
   input: { text: string } | { link: PastedPost },
 ): Promise<Reply> {
   const { db, config } = deps;
@@ -317,6 +317,9 @@ export async function advisePasted(
     assertBudget(db, config, 'x', now);
     if (affordableXResources(db, config, 'post', now) < 1) {
       throw new BudgetExceededError('x', "Today's X budget cannot pay for reading this post.");
+    }
+    if (!deps.x) {
+      throw new Error('Reading a post needs X_BEARER_TOKEN in .env. Paste its text after /advice instead.');
     }
     const post = await deps.x.lookupPost(link.postId);
     if (!post) throw new Error('X does not return this post: deleted, protected, or a wrong link. Paste its text after /advice.');
