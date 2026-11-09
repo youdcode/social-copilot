@@ -37,7 +37,7 @@
       "chat": "mistral-medium-3-5"
     },
     "webSearchTool": "web_search",
-    "draftMode": "single",
+    "draftMode": "two_step",
     "dailyCapEur": 1,
     "vatMultiplier": 1.2,
     "countConnectorTokensAsInput": true,

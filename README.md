@@ -186,9 +186,10 @@ Prices live in `config/config.json`: update them if providers change theirs.
 
   A post read again the same UTC day is not billed again, and a request with no result is not billed. With 40 watched accounts, expect around $0.80 a day, VAT included.
 - **Mistral**:
-  - input and output tokens, plus about €0.03 per web search;
-  - a draft costs a few cents, so every network you turn on adds a few cents per slot;
-  - networks drafting at the same time share the cost of grouping the news.
+  - each news is checked once, with 2 web searches at most (about €0.03 each), then written for each network without searching again;
+  - measured: about €0.09 for a draft on a news not checked yet, about €0.01 for the same news on another network;
+  - networks drafting at the same time also share the cost of grouping the news into topics;
+  - with the 7 networks on, expect well under €1 a day.
 - **Daily caps**:
   - `mistral.dailyCapEur` and `x.dailyCapUsd`, VAT included (`vatMultiplier`, 1.2 by default);
   - the Mistral cap follows the day of the configured time zone, the X cap the UTC day, like X's invoice;

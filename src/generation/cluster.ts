@@ -28,6 +28,8 @@ Rules:
 - A topic is one concrete event: a release, a feature, an update, a funding round, a launch, a paper, an acquisition.
 - Put in a topic every item that covers that same event, and use each item at most once.
 - Ignore items outside the five pillars, personal chatter, jokes, hiring posts, event promotion and vague opinions.
+- Ignore people's private lives, scandals, gossip, and legal, criminal or espionage allegations against individuals: they are out of scope and risky for an anonymous account.
+- Ignore politics and elections, unless a product or a tech regulation is the event itself.
 - Skip any topic that matches the excluded list.
 - Label each topic in a few plain English words, naming the product or company.
 - Refer to items only by their ref, exactly as given.

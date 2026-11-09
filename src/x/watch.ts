@@ -122,7 +122,9 @@ export function purgeExpiredXText(db: Db, config: AppConfig, now: Date): number 
        WHERE (post_text IS NOT NULL OR parent_post_text IS NOT NULL) AND created_at <= ?`,
     )
     .run(iso(now), cutoff).changes;
-  return posts + replies;
+  // Web checks of topics may quote X posts: they go at the same time.
+  const research = db.prepare('DELETE FROM topic_research WHERE created_at <= ?').run(cutoff).changes;
+  return posts + replies + research;
 }
 
 /** Removes one post entirely (on request): its row, and its text wherever a reply quotes it. */

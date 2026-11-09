@@ -13,6 +13,7 @@ const EXPECTED_TABLES = [
   'replies',
   'slot_runs',
   'spend',
+  'topic_research',
   'x_cursors',
   'x_posts',
   'x_reads',

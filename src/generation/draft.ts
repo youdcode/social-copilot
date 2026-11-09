@@ -160,8 +160,11 @@ function describeItem(item: Candidate, now: Date): string {
   return `- [${item.kind === 'x_post' ? 'X post' : item.kind === 'rss' ? 'RSS' : 'Hacker News'}] ${item.label}, ${age} h ago, ${item.url}\n  ${item.text.replace(/\s+/g, ' ').slice(0, 500)}`;
 }
 
-/** The user message for a draft: the topic, its trigger, and the other items grouped with it. */
-export function draftInput(topic: RankedTopic, now: Date, feedback: readonly string[] = []): string {
+/** Web searches asked per news: enough to confirm an announcement that already has its source. */
+export const MAX_WEB_SEARCHES = 2;
+
+/** The topic, its trigger, and the other items grouped with it. */
+function topicLines(topic: RankedTopic, now: Date): string[] {
   const others = topic.items.filter((i) => i.ref !== topic.trigger.ref).slice(0, 8);
   const triggerUrl = topic.trigger.sourceUrl
     ? `Trigger URL (may be cited as a source): ${topic.trigger.sourceUrl}`
@@ -174,8 +177,20 @@ export function draftInput(topic: RankedTopic, now: Date, feedback: readonly str
     describeItem(topic.trigger, now),
     triggerUrl,
     ...(others.length > 0 ? ['', 'Related items:', ...others.map((i) => describeItem(i, now))] : []),
+  ];
+}
+
+/** The user message of the web check of a topic, shared by every network. */
+export function researchInput(topic: RankedTopic, now: Date): string {
+  return [...topicLines(topic, now), '', `Check these facts with ${MAX_WEB_SEARCHES} web searches at most.`].join('\n');
+}
+
+/** The user message for a draft: the topic, its trigger, the related items, and the reasons of a previous rejection. */
+export function draftInput(topic: RankedTopic, now: Date, feedback: readonly string[] = []): string {
+  return [
+    ...topicLines(topic, now),
     '',
-    'Verify the facts with a web search before writing, then return the JSON object.',
+    `Verify the facts with ${MAX_WEB_SEARCHES} web searches at most before writing, then return the JSON object.`,
     ...(feedback.length > 0
       ? ['', 'Your previous answer was rejected for these reasons. Fix them:', ...feedback.map((f) => `- ${f}`)]
       : []),

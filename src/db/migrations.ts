@@ -212,4 +212,16 @@ export const MIGRATIONS: readonly string[] = [
   DROP TABLE slot_runs;
   ALTER TABLE slot_runs_by_network RENAME TO slot_runs;
   `,
+  `
+  -- One web check per news, reused by every network that writes about it. Its facts may quote X posts:
+  -- deleted with the X text, 24 h after it was made.
+  CREATE TABLE topic_research (
+    trigger_ref TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    facts TEXT NOT NULL,
+    refs TEXT NOT NULL CHECK (json_valid(refs) AND json_type(refs) = 'array'),
+    tool_calls INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  ) WITHOUT ROWID;
+  `,
 ];

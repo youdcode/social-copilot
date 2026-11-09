@@ -10,7 +10,16 @@ import type { Candidate } from './candidates.ts';
 import { gatherCandidates } from './candidates.ts';
 import { clusterCandidates } from './cluster.ts';
 import type { DraftJson } from './draft.ts';
-import { draftInput, draftJsonSchema, PROMPT_VERSION, similarTopics, systemPrompt, validateDraft } from './draft.ts';
+import {
+  draftInput,
+  draftJsonSchema,
+  MAX_WEB_SEARCHES,
+  PROMPT_VERSION,
+  researchInput,
+  similarTopics,
+  systemPrompt,
+  validateDraft,
+} from './draft.ts';
 import type { RankedTopic, Topic } from './rank.ts';
 import { rankTopics } from './rank.ts';
 
@@ -51,7 +60,39 @@ export type SlotOutcome = {
   attempts: AttemptReport[];
 };
 
-const RESEARCH_INSTRUCTIONS = `Research the topic below with web search. Report only verified facts, each with the URL of the page that supports it. Use native English, no em dashes. Do not write a tweet.`;
+const RESEARCH_INSTRUCTIONS = `Research the topic below with web search, in ${MAX_WEB_SEARCHES} searches at most. Report only verified facts (what shipped, for whom, prices, limits, dates), each with the URL of the page that supports it. Use native English, no em dashes. Do not write a post.`;
+
+type Research = { text: string; references: WebReference[]; toolCalls: number };
+
+/**
+ * The web check of a topic: made once, stored under its trigger, and reused by every network that writes about it and
+ * by every retry, until the X text purge deletes it. A check that ran no search is not kept.
+ */
+async function researchFor(deps: GeneratorDeps, topic: RankedTopic): Promise<Research> {
+  const { db, config } = deps;
+  const cutoff = new Date(deps.now().getTime() - config.retention.xTextHours * 3_600_000).toISOString();
+  const kept = db
+    .prepare('SELECT facts, refs, tool_calls FROM topic_research WHERE trigger_ref = ? AND created_at > ?')
+    .get(topic.trigger.ref, cutoff) as { facts: string; refs: string; tool_calls: number } | undefined;
+  if (kept) {
+    deps.log(`Reusing the web check of "${topic.label}".`);
+    return { text: kept.facts, references: JSON.parse(kept.refs) as WebReference[], toolCalls: kept.tool_calls };
+  }
+  const result = await deps.gateway.searchAndAnswer({
+    model: config.mistral.models.draft,
+    tool: config.mistral.webSearchTool,
+    instructions: RESEARCH_INSTRUCTIONS,
+    input: researchInput(topic, deps.now()),
+  });
+  recordMistralUsage(db, config, result.usage, deps.now());
+  if (result.toolCalls > 0) {
+    db.prepare(
+      `INSERT OR REPLACE INTO topic_research (trigger_ref, label, facts, refs, tool_calls, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(topic.trigger.ref, topic.label, result.text, JSON.stringify(result.references), result.toolCalls, deps.now().toISOString());
+  }
+  return { text: result.text, references: result.references, toolCalls: result.toolCalls };
+}
 
 /** Topics posted or refused on this network whose exclusion has not expired. */
 export function activeExcludedTopics(db: Db, now: Date, network: Network = 'x'): string[] {
@@ -112,13 +153,7 @@ async function draftOnce(
     return { ...parse(result.text), references: result.references, toolCalls: result.toolCalls };
   }
 
-  const research = await gateway.searchAndAnswer({
-    model,
-    tool: config.mistral.webSearchTool,
-    instructions: RESEARCH_INSTRUCTIONS,
-    input,
-  });
-  recordMistralUsage(db, config, research.usage, deps.now());
+  const research = await researchFor(deps, topic);
   assertBudget(db, config, 'mistral', deps.now());
   const pages = research.references.map((r) => `- ${r.title}: ${r.url}`).join('\n');
   const written = await gateway.completeJson({

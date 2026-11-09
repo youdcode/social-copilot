@@ -4,6 +4,7 @@ import { generateDraft, type GeneratorDeps } from '../src/generation/generator.t
 import type { MistralGateway, SearchResult } from '../src/mistral/gateway.ts';
 import type { Notifier, ProposedDraft } from '../src/notifier.ts';
 import { spentToday } from '../src/spend.ts';
+import { purgeExpiredXText } from '../src/x/watch.ts';
 import { testConfig, testDb, testFilter } from './helpers.ts';
 
 const now = new Date('2026-10-01T10:00:00Z');
@@ -66,7 +67,11 @@ function deps(gateway: MistralGateway, change?: (c: any) => void) {
   seed(db);
   const d: GeneratorDeps = {
     db,
-    config: testConfig(change),
+    // Most tests here exercise the single call; the two-step ones say so.
+    config: testConfig((c) => {
+      c.mistral.draftMode = 'single';
+      change?.(c);
+    }),
     gateway,
     filter: testFilter,
     voice: 'Test voice.',
@@ -286,5 +291,64 @@ describe('several networks', () => {
     const outcome = await generateDraft(d, 'x', slot, { save: false });
     assert.equal(outcome.status, 'drafted');
     assert.deepEqual(searches, ['Topic: Lab releases Model 5', 'Topic: Tool ships version 2']);
+  });
+});
+
+describe('one web check per news', () => {
+  function twoStepGateway() {
+    const base = fakeGateway([goodDraft]);
+    const calls = { searches: 0, writes: [] as string[] };
+    const gateway: MistralGateway = {
+      ...base,
+      searchAndAnswer: async (o) => {
+        calls.searches++;
+        assert.equal(o.jsonSchema, undefined);
+        assert.match(o.input, /2 web searches at most/);
+        return { ...(await base.searchAndAnswer(o)), text: 'Model 5 shipped at half the price.' };
+      },
+      completeJson: async (o) => {
+        if (o.jsonSchema.name === 'topics') return base.completeJson(o);
+        calls.writes.push(o.jsonSchema.name);
+        assert.match(o.user, /Verified facts from your web search:\nModel 5 shipped at half the price\./);
+        assert.match(o.user, /- Model 5: https:\/\/lab\.test\/model-5/);
+        return { text: JSON.stringify(goodDraft), usage };
+      },
+    };
+    return { gateway, calls };
+  }
+
+  test('every network writing about the same news reuses its web check', async () => {
+    const { gateway, calls } = twoStepGateway();
+    const { d } = deps(gateway, (c) => (c.mistral.draftMode = 'two_step'));
+    const cache = {};
+    assert.equal((await generateDraft(d, 'x', slot, { save: true, clusterCache: cache })).status, 'drafted');
+    assert.equal((await generateDraft(d, 'linkedin', slot, { save: true, clusterCache: cache })).status, 'drafted');
+    assert.equal(calls.searches, 1);
+    assert.deepEqual(calls.writes, ['draft_x', 'draft_linkedin']);
+    const draft = d.db.prepare("SELECT sources FROM drafts WHERE network = 'linkedin'").pluck().get() as string;
+    assert.deepEqual(JSON.parse(draft), ['https://lab.test/model-5', 'https://x.com/lab/status/9001']);
+  });
+
+  test('a retry writes again without searching again', async () => {
+    const { gateway, calls } = twoStepGateway();
+    let writes = 0;
+    const tooLong = { ...gateway, completeJson: async (o: Parameters<MistralGateway['completeJson']>[0]) => {
+      if (o.jsonSchema.name !== 'topics' && ++writes === 1) return { text: JSON.stringify({ ...goodDraft, text: 'x'.repeat(300) }), usage };
+      return gateway.completeJson(o);
+    } };
+    const { d } = deps(tooLong, (c) => (c.mistral.draftMode = 'two_step'));
+    const outcome = await generateDraft(d, 'x', slot, { save: false });
+    assert.equal(outcome.status, 'drafted');
+    assert.equal(outcome.attempts.length, 2);
+    assert.equal(calls.searches, 1);
+  });
+
+  test('the web check is deleted with the X text, 24 hours after it was made', async () => {
+    const { gateway } = twoStepGateway();
+    const { d } = deps(gateway, (c) => (c.mistral.draftMode = 'two_step'));
+    await generateDraft(d, 'x', slot, { save: false });
+    assert.equal(d.db.prepare('SELECT count(*) FROM topic_research').pluck().get(), 1);
+    purgeExpiredXText(d.db, d.config, new Date(now.getTime() + 25 * 3_600_000));
+    assert.equal(d.db.prepare('SELECT count(*) FROM topic_research').pluck().get(), 0);
   });
 });
