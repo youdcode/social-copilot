@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
+  draftInput,
   draftJsonSchema,
+  systemPrompt,
   normalizeUrl,
   similarTopics,
   validateDraft,
@@ -134,6 +136,21 @@ describe('validateDraft on other networks', () => {
     const visual = { type: 'carousel', brief: 'Slide 1: the price cut. Slide 2: who it helps.', duration_s: 0 };
     assert.equal(validateDraft(draft({ asset_request: visual }), context({ network: 'instagram' })).ok, true);
     assert.equal(validateDraft(draft({ script }), context()).ok, false);
+  });
+});
+
+describe('prompts', () => {
+  test('ask for a take, not a summary, without links in the text', () => {
+    const prompt = systemPrompt('Dry.', [], 'x');
+    assert.match(prompt, /Lead with a take/);
+    assert.match(prompt, /No links in the text: sources go in the sources field/);
+    assert.match(systemPrompt('Dry.', [], 'youtube'), /except the sources listed at the end of the description/);
+  });
+
+  test('show the recent posts of the network so the new one does not sound the same', () => {
+    const topic = { label: 'Model 5', pillar: 'ai' as const, itemRefs: ['x:1'], score: 1, items: [candidate({ ref: 'x:1' })], trigger: candidate({ ref: 'x:1' }) };
+    const input = draftInput(topic, now, [], ['Model 4 is out. Cheaper.']);
+    assert.match(input, /recent posts on this network \(do not reuse their opening or structure\):\n- Model 4 is out\. Cheaper\./);
   });
 });
 

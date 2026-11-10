@@ -11,7 +11,7 @@ export const PILLARS = ['ai', 'startups', 'deeptech', 'devtools', 'motion'] as c
 export type Pillar = (typeof PILLARS)[number];
 
 /** Bump when the prompt changes, so each stored draft says which prompt wrote it. */
-export const PROMPT_VERSION = '2026-11-02.1';
+export const PROMPT_VERSION = '2026-11-10.1';
 
 export const ASSET_TYPES = ['video', 'image', 'carousel', 'screenshot'] as const;
 
@@ -142,6 +142,13 @@ export function systemPrompt(voice: string, excludedTopics: readonly string[], n
 
 Voice: ${voice.trim()}
 
+How to write:
+- Do not just report the news: a news wire already did. Lead with a take: an opinion, a concrete consequence, who wins and who loses, a comparison with what existed before, a doubt, or the question people are actually asking.
+- When the web check reports what people say about it, use it to sharpen the take: agree, push back, or answer it.
+- Facts come from the sources; the opinion is the account's own and must read as an opinion, never as a fact.
+- Vary the angle and the shape: do not reuse the opening or the structure of the account's recent posts listed in the message.
+- No links in the text${network === 'youtube' ? ', except the sources listed at the end of the description' : ''}: sources go in the sources field.
+
 Rules:
 ${spec.rules.map((rule) => `- ${rule}`).join('\n')}
 - Native English, never translated. No hype words.
@@ -185,10 +192,21 @@ export function researchInput(topic: RankedTopic, now: Date): string {
   return [...topicLines(topic, now), '', `Check these facts with ${MAX_WEB_SEARCHES} web searches at most.`].join('\n');
 }
 
-/** The user message for a draft: the topic, its trigger, the related items, and the reasons of a previous rejection. */
-export function draftInput(topic: RankedTopic, now: Date, feedback: readonly string[] = []): string {
+/**
+ * The user message for a draft: the topic, its trigger, the related items, the account's recent posts on this network
+ * (so the new one does not sound the same), and the reasons of a previous rejection.
+ */
+export function draftInput(
+  topic: RankedTopic,
+  now: Date,
+  feedback: readonly string[] = [],
+  recentPosts: readonly string[] = [],
+): string {
   return [
     ...topicLines(topic, now),
+    ...(recentPosts.length > 0
+      ? ['', "The account's recent posts on this network (do not reuse their opening or structure):", ...recentPosts.map((p) => `- ${p.replace(/\s+/g, ' ').slice(0, 300)}`)]
+      : []),
     '',
     `Verify the facts with ${MAX_WEB_SEARCHES} web searches at most before writing, then return the JSON object.`,
     ...(feedback.length > 0

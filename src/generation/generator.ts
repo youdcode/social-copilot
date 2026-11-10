@@ -60,7 +60,18 @@ export type SlotOutcome = {
   attempts: AttemptReport[];
 };
 
-const RESEARCH_INSTRUCTIONS = `Research the topic below with web search, in ${MAX_WEB_SEARCHES} searches at most. Report only verified facts (what shipped, for whom, prices, limits, dates), each with the URL of the page that supports it. Use native English, no em dashes. Do not write a post.`;
+const RESEARCH_INSTRUCTIONS = `Research the topic below with web search, in ${MAX_WEB_SEARCHES} searches at most: one for the facts, one for the reactions.
+1. Verified facts: what shipped, for whom, prices, limits, dates, each with the URL of the page that supports it.
+2. What people say about it (Hacker News, Reddit, X, blogs, reviews): the main praise, the main criticism, the open questions, each with its URL. Report reactions as reactions, not as facts.
+Use native English, no em dashes. Do not write a post.`;
+
+/** Recent drafts of the network, newest first, so a new one does not open or sound the same. */
+function recentPosts(db: Db, network: Network): string[] {
+  return db
+    .prepare("SELECT text FROM drafts WHERE network = ? AND status != 'refused' ORDER BY id DESC LIMIT 5")
+    .pluck()
+    .all(network) as string[];
+}
 
 type Research = { text: string; references: WebReference[]; toolCalls: number };
 
@@ -130,7 +141,7 @@ async function draftOnce(
   const { config, gateway, db } = deps;
   const system = systemPrompt(deps.voice, excluded, network);
   const jsonSchema = draftJsonSchema(network);
-  const input = draftInput(topic, deps.now(), feedback);
+  const input = draftInput(topic, deps.now(), feedback, recentPosts(db, network));
   const model = config.mistral.models.draft;
 
   const parse = (text: string): Pick<RawAttempt, 'raw' | 'jsonParsed' | 'parseError'> => {

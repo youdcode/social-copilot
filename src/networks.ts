@@ -50,8 +50,8 @@ export const NETWORK_SPECS: Record<Network, NetworkSpec> = {
     title: false,
     assetRequired: false,
     rules: [
-      'One tweet, 280 characters max as X counts them (a URL counts 23). No hashtags unless essential. One emoji at most.',
-      'Say what shipped and why it matters, in one or two sentences.',
+      'One tweet, 280 characters max as X counts them. No hashtags unless essential. One emoji at most.',
+      'One or two sentences: a take on the news, not a summary of it.',
     ],
   },
   threads: {
@@ -86,7 +86,7 @@ export const NETWORK_SPECS: Record<Network, NetworkSpec> = {
     assetRequired: false,
     rules: [
       'One LinkedIn post, 1,500 characters max, in short paragraphs separated by blank lines.',
-      'Open with a first line that makes people click "see more". Explain what shipped, who it helps, and one practical takeaway.',
+      'Open with a first line that makes people click "see more": the take, not the announcement. Then what shipped, who it helps, and one practical takeaway.',
       'At most 3 hashtags, at the very end. No emojis as bullet points. No engagement bait ("Agree?", "Thoughts?").',
     ],
   },

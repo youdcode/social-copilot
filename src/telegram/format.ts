@@ -89,7 +89,10 @@ export function draftCard(draft: Draft, copyMax: number): Card {
   const copyable = fitsCopyButton(draft.text, copyMax);
   let textBlock = copyable ? escapeHtml(draft.text) : `<pre>${escapeHtml(draft.text)}</pre>`;
   let scriptBlock = draft.script ? scriptLines(draft.script) : [];
-  let sources = draft.sources.map((s) => link(s, shortUrl(s))).join(' · ');
+  // Sources are for checking, not for the post: one discreet line, the trigger folded in.
+  const allSources = draft.sources.includes(draft.triggerUrl) ? draft.sources : [...draft.sources, draft.triggerUrl];
+  const hostOf = (url: string) => shortUrl(url).split('/')[0]!;
+  let sources = allSources.map((s) => link(s, hostOf(s))).join(' · ');
   const build = () =>
     [
       `<b>${spec.name} · draft #${draft.id}</b> · ${PILLAR_NAMES[draft.pillar]} · ${draft.length}/${spec.maxLength}`,
@@ -100,8 +103,7 @@ export function draftCard(draft: Draft, copyMax: number): Card {
       ...(scriptBlock.length > 0 ? ['', ...scriptBlock] : []),
       '',
       `<b>Why:</b> ${escapeHtml(draft.whyItMatters)}`,
-      `<b>Sources:</b> ${sources}`,
-      `<b>Trigger:</b> ${link(draft.triggerUrl, shortUrl(draft.triggerUrl))}`,
+      `<i>Sources: ${sources}</i>`,
       ...(assetLine(draft) ? [assetLine(draft)!] : []),
     ].join('\n');
   // A card must fit in one Telegram message. What does not fit goes first, in messages of its own: the text, then the
@@ -119,7 +121,7 @@ export function draftCard(draft: Draft, copyMax: number): Card {
     text = build();
   }
   if (text.length > MESSAGE_MAX) {
-    sources = draft.sources.map((s) => escapeHtml(shortUrl(s))).join(' · ');
+    sources = allSources.map((s) => escapeHtml(hostOf(s))).join(' · ');
     text = build();
   }
   const card: Card = { text, ...(before.length > 0 ? { before } : {}) };

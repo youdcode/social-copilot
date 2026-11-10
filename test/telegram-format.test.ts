@@ -26,7 +26,8 @@ describe('draftCard', () => {
     const id = insertDraft(db, { text: 'R&D <fast> wins' });
     const card = draftCard(getDraft(db, id)!, 256);
     assert.match(card.text, /R&amp;D &lt;fast&gt; wins/);
-    assert.match(card.text, /<a href="https:\/\/lab\.test\/model-5">lab\.test\/model-5<\/a>/);
+    assert.match(card.text, /<i>Sources: <a href="https:\/\/lab\.test\/model-5">lab\.test<\/a><\/i>/);
+    assert.doesNotMatch(card.text, /Trigger:/);
     const all = buttons(card);
     assert.deepEqual(all[0]!.copy_text, { text: 'R&D <fast> wins' });
     assert.deepEqual(
