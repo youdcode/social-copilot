@@ -19,6 +19,11 @@ export type NetworkSpec = {
   title: boolean;
   /** Instagram needs a visual: the asset request is mandatory. */
   assetRequired: boolean;
+  /**
+   * Where to post by hand. With {text}, the network's official share link opens its compose window with the text
+   * already in; without it, the page only opens and the text has to be copied first.
+   */
+  composeUrl: string;
   /** Writing rules sent to Mistral, one per line. */
   rules: string[];
 };
@@ -49,6 +54,7 @@ export const NETWORK_SPECS: Record<Network, NetworkSpec> = {
     video: false,
     title: false,
     assetRequired: false,
+    composeUrl: 'https://x.com/intent/post?text={text}',
     rules: [
       'One tweet, 280 characters max as X counts them. No hashtags unless essential. One emoji at most.',
       'One or two sentences: a take on the news, not a summary of it.',
@@ -62,6 +68,7 @@ export const NETWORK_SPECS: Record<Network, NetworkSpec> = {
     video: false,
     title: false,
     assetRequired: false,
+    composeUrl: 'https://www.threads.com/intent/post?text={text}',
     rules: [
       'One Threads post, 500 characters max. Conversational, can end on a question. No hashtags. One emoji at most.',
     ],
@@ -74,6 +81,7 @@ export const NETWORK_SPECS: Record<Network, NetworkSpec> = {
     video: false,
     title: false,
     assetRequired: false,
+    composeUrl: 'https://bsky.app/intent/compose?text={text}',
     rules: ['One Bluesky post, 300 characters max. Plain and direct, no hashtags. One emoji at most.'],
   },
   linkedin: {
@@ -84,6 +92,7 @@ export const NETWORK_SPECS: Record<Network, NetworkSpec> = {
     video: false,
     title: false,
     assetRequired: false,
+    composeUrl: 'https://www.linkedin.com/feed/?shareActive=true&text={text}',
     rules: [
       'One LinkedIn post, 1,500 characters max, in short paragraphs separated by blank lines.',
       'Open with a first line that makes people click "see more": the take, not the announcement. Then what shipped, who it helps, and one practical takeaway.',
@@ -98,6 +107,7 @@ export const NETWORK_SPECS: Record<Network, NetworkSpec> = {
     video: false,
     title: false,
     assetRequired: true,
+    composeUrl: 'https://www.instagram.com/',
     rules: [
       'One Instagram caption, 1,000 characters max. The first line must stand alone: it is all people see before "more".',
       'At most 5 relevant hashtags, at the end.',
@@ -112,6 +122,7 @@ export const NETWORK_SPECS: Record<Network, NetworkSpec> = {
     video: true,
     title: false,
     assetRequired: false,
+    composeUrl: 'https://www.tiktok.com/upload',
     rules: [
       `A short vertical video of ${MAX_VIDEO_SECONDS} seconds at most, filmed by the operator: write its script.`,
       'The hook must grab attention in the first 2 seconds. Each shot gives what to show, what to say, and the text on screen.',
@@ -126,6 +137,7 @@ export const NETWORK_SPECS: Record<Network, NetworkSpec> = {
     video: true,
     title: true,
     assetRequired: false,
+    composeUrl: 'https://studio.youtube.com/',
     rules: [
       `A YouTube Short of ${MAX_VIDEO_SECONDS} seconds at most, filmed by the operator: write its script.`,
       `A title of ${MAX_TITLE_LENGTH} characters max, specific and searchable, no clickbait.`,
@@ -134,6 +146,26 @@ export const NETWORK_SPECS: Record<Network, NetworkSpec> = {
     ],
   },
 };
+
+/** Longest share link we hand to Telegram: past it, the page opens empty and the text is copied instead. */
+export const MAX_COMPOSE_URL = 2000;
+
+/**
+ * The link that opens the network's compose window, with the text already in when the network allows it and the link
+ * stays short enough. prefilled says whether the text is in.
+ */
+export function composeLink(network: Network, text: string): { url: string; prefilled: boolean } {
+  const template = NETWORK_SPECS[network].composeUrl;
+  if (!template.includes('{text}')) return { url: template, prefilled: false };
+  const url = template.replace('{text}', encodeURIComponent(text));
+  if (url.length <= MAX_COMPOSE_URL) return { url, prefilled: true };
+  return { url: template.replace(/[?&][^?&]*\{text\}.*$/, ''), prefilled: false };
+}
+
+/** The X compose window answering one post, with the reply already in. */
+export function xReplyLink(postId: string, text: string): string {
+  return `https://x.com/intent/post?in_reply_to=${encodeURIComponent(postId)}&text=${encodeURIComponent(text)}`;
+}
 
 export function isNetwork(value: string): value is Network {
   return (NETWORKS as readonly string[]).includes(value);

@@ -2,7 +2,7 @@ import { InlineKeyboard } from 'grammy';
 import { enabledNetworks, type AppConfig } from '../config.ts';
 import type { Draft } from '../drafts.ts';
 import type { VideoScript } from '../generation/draft.ts';
-import { NETWORK_SPECS, NETWORKS, type Network } from '../networks.ts';
+import { composeLink, NETWORK_SPECS, NETWORKS, xReplyLink, type Network } from '../networks.ts';
 import { replyAgeMinutes, type Reply } from '../replies.ts';
 import type { DailyStats } from '../stats.ts';
 
@@ -127,10 +127,15 @@ export function draftCard(draft: Draft, copyMax: number): Card {
   const card: Card = { text, ...(before.length > 0 ? { before } : {}) };
   if (!pending) return card;
 
+  // Telegram buttons either copy or open a link, never both. Where the network takes the text in its share link, Open is
+  // enough; elsewhere, Copy comes first, then Open.
+  const open = composeLink(draft.network, draft.text);
   const keyboard = new InlineKeyboard();
-  if (copyable) keyboard.copyText('📋 Copy', draft.text);
+  if (!open.prefilled && copyable) keyboard.copyText('📋 Copy', draft.text);
   if (draft.title && fitsCopyButton(draft.title, copyMax)) keyboard.copyText('📋 Title', draft.title);
-  if (copyable || draft.title) keyboard.row();
+  keyboard.url(`↗️ Open in ${spec.name}`, open.url);
+  if (open.prefilled && copyable) keyboard.copyText('📋 Copy', draft.text);
+  keyboard.row();
   keyboard
     .text({ text: '✅ Posted', style: 'success' }, `d:${draft.id}:post`)
     .text('✏️ Edit', `d:${draft.id}:edit`)
@@ -201,6 +206,12 @@ export function replyCard(reply: Reply, now: Date, copyMax: number): Card {
     return { text: lines.join('\n') };
   }
   const keyboard = new InlineKeyboard();
+  // Each variant opens X's reply window on the post, the reply already in.
+  if (reply.postId) {
+    const postId = reply.postId;
+    reply.variants.forEach((variant, i) => keyboard.url(`↩️ Reply ${i + 1}`, xReplyLink(postId, variant)));
+    if (reply.variants.length > 0) keyboard.row();
+  }
   reply.variants.forEach((variant, i) => {
     if (fitsCopyButton(variant, copyMax)) keyboard.copyText(`📋 ${i + 1}`, variant);
   });

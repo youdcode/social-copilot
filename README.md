@@ -148,11 +148,12 @@ Send `/start` to the bot.
 
 - **`/start`**: one button per network. Networks that are off in the config are greyed out.
 - **Drafts** arrive as one message each, with a notification. A card holds the text (and the title and script for video networks), the pillar, a "why" line, the sources and any asset request.
-  - **Copy**: Telegram's native copy button up to 256 characters (a Telegram limit), otherwise the text sits in a block easy to copy. YouTube titles get their own button.
+  - **Open in X** (or Threads, Bluesky, LinkedIn): opens the network's compose window with the text already in, through its official share link. You only tap Post.
+  - **Copy**: Telegram's native copy button up to 256 characters (a Telegram limit), otherwise the text sits in a block easy to copy. For Instagram, TikTok and YouTube, which take no text in a link, Copy comes first, then Open. YouTube titles get their own button.
   - **Posted**: tap it once published. The bot then offers to save the link of the post.
   - **Edit**: reply to the card with an instruction ("shorter", "lead with the price"…). Mistral rewrites it without web search, so without adding facts, and a new card arrives.
   - **No**: optional reason, then a new topic for that network right away. A click Telegram sends twice does not start a second draft.
-- **Who to reply to** (X): among recent posts of the watched accounts, Mistral picks those worth a reply and writes 3 replies, each with its copy button. A reply works best on a post less than an hour old.
+- **Who to reply to** (X): among recent posts of the watched accounts, Mistral picks those worth a reply and writes 3 replies. Each one has a button that opens X's reply window on the post, the reply already in. A reply works best on a post less than an hour old.
 - **Replies received** (X): replies and mentions the account received, with the post they answer, advice and 3 replies. The bot tells you when new ones arrive.
 - **Asset requests**: type, brief and duration, with an "Asset ready" button.
 - **Free messages** go to Mistral, with the account voice and the pending draft of the network you opened last; `/reset` forgets the conversation.

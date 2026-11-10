@@ -12,7 +12,7 @@ import {
   splitMessage,
   type Card,
 } from '../src/telegram/format.ts';
-import type { Network } from '../src/networks.ts';
+import { composeLink, type Network } from '../src/networks.ts';
 import { dailyStats } from '../src/stats.ts';
 import { insertDraft, testConfig, testDb } from './helpers.ts';
 
@@ -21,7 +21,7 @@ type Button = Record<string, unknown> & { text: string };
 const buttons = (card: Card): Button[] => (card.keyboard?.inline_keyboard.flat() ?? []) as unknown as Button[];
 
 describe('draftCard', () => {
-  test('escapes the text and offers Copy, Posted, Edit and No on a pending draft', () => {
+  test('escapes the text and offers Open in X (text already in), Copy, Posted, Edit and No on a pending draft', () => {
     const db = testDb();
     const id = insertDraft(db, { text: 'R&D <fast> wins' });
     const card = draftCard(getDraft(db, id)!, 256);
@@ -29,9 +29,10 @@ describe('draftCard', () => {
     assert.match(card.text, /<i>Sources: <a href="https:\/\/lab\.test\/model-5">lab\.test<\/a><\/i>/);
     assert.doesNotMatch(card.text, /Trigger:/);
     const all = buttons(card);
-    assert.deepEqual(all[0]!.copy_text, { text: 'R&D <fast> wins' });
+    assert.deepEqual(all[0], { text: '↗️ Open in X', url: 'https://x.com/intent/post?text=R%26D%20%3Cfast%3E%20wins' });
+    assert.deepEqual(all[1]!.copy_text, { text: 'R&D <fast> wins' });
     assert.deepEqual(
-      all.slice(1).map((b) => b.callback_data),
+      all.slice(2).map((b) => b.callback_data),
       [`d:${id}:post`, `d:${id}:edit`, `d:${id}:no`],
     );
   });
@@ -93,6 +94,29 @@ describe('draftCard on other networks', () => {
   });
 });
 
+describe('Open buttons', () => {
+  test('networks without a share link get Copy first, then Open', () => {
+    const db = testDb();
+    const visual = JSON.stringify({ type: 'image', brief: 'Price chart', duration_s: 0 });
+    const id = insertDraft(db, { network: 'instagram', asset_request: visual });
+    const all = buttons(draftCard(getDraft(db, id)!, 256));
+    assert.deepEqual(all.slice(0, 2).map((b) => b.text), ['📋 Copy', '↗️ Open in Instagram']);
+    assert.equal(all[1]!.url, 'https://www.instagram.com/');
+  });
+
+  test('a text too long for a share link opens the page empty, and Copy comes first', () => {
+    const db = testDb();
+    const id = insertDraft(db, { network: 'linkedin', text: 'Long post '.repeat(140).trim() });
+    assert.deepEqual(composeLink('linkedin', 'short'), {
+      url: 'https://www.linkedin.com/feed/?shareActive=true&text=short',
+      prefilled: true,
+    });
+    assert.deepEqual(composeLink('linkedin', 'x'.repeat(2500)), { url: 'https://www.linkedin.com/feed/?shareActive=true', prefilled: false });
+    const all = buttons(draftCard(getDraft(db, id)!, 2000));
+    assert.deepEqual(all.slice(0, 2).map((b) => b.text), ['📋 Copy', '↗️ Open in LinkedIn']);
+  });
+});
+
 describe('replyCard', () => {
   const reply: Reply = {
     id: 3,
@@ -118,6 +142,8 @@ describe('replyCard', () => {
     assert.match(card.text, /Post is 25 min old\./);
     assert.match(card.text, /<pre>x{300}<\/pre>/);
     const all = buttons(card);
+    assert.deepEqual(all.filter((b) => 'url' in b).map((b) => b.text), ['↩️ Reply 1', '↩️ Reply 2', '↩️ Reply 3']);
+    assert.equal(all[0]!.url, 'https://x.com/intent/post?in_reply_to=11&text=One.');
     assert.deepEqual(all.filter((b) => 'copy_text' in b).map((b) => b.text), ['📋 1', '📋 2']);
     assert.deepEqual(all.filter((b) => 'callback_data' in b).map((b) => b.callback_data), ['r:3:done', 'r:3:skip']);
   });
