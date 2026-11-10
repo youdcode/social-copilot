@@ -40,7 +40,9 @@ export function createMediaDelivery(
               height: VIDEO_HEIGHT,
               duration: Math.round(media.seconds),
               supports_streaming: true,
-              caption: `Video for draft #${draftId}, no sound: add a voice or music in the app if you like.`,
+              caption: deps.config.media.voice.enabled
+                ? `Video for draft #${draftId}, with its voiceover.`
+                : `Video for draft #${draftId}, no voice: add one in the app if you like.`,
             });
           } else {
             await api.sendMediaGroup(

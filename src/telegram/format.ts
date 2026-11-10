@@ -277,6 +277,7 @@ export const HELP_TEXT = [
   '/stats: posts, replies and spend of the day',
   '/reset: forget the conversation with Mistral',
   '/advice &lt;text&gt;: "worth a reply" advice and 3 replies for a post pasted without a link',
+  '/trends: what works in short videos this week, as the video scripts follow it',
   '/help: this help',
   '',
   '<b>On a draft card</b>',

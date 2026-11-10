@@ -99,8 +99,8 @@ describe('validateDraft', () => {
 describe('validateDraft on other networks', () => {
   const script = {
     hook: 'Half the price?',
-    shots: [{ visual: 'The pricing page', voiceover: 'Model 5 is out.', on_screen_text: 'Half price' }],
-    duration_s: 40,
+    shots: [{ visual: 'Pricing page', voiceover: 'Model 5 is out.', on_screen_text: '-50%' }, { visual: 'Chart', voiceover: 'Same quality, half the price.', on_screen_text: 'Same quality' }, { visual: 'Terminal', voiceover: 'Check the benchmarks first.', on_screen_text: 'Benchmarks?' }],
+    duration_s: 25,
   };
 
   test('counts characters as each network does: Bluesky counts an emoji once, LinkedIn allows 1,500', () => {
@@ -112,23 +112,28 @@ describe('validateDraft on other networks', () => {
     if (!tooLong.ok) assert.match(tooLong.errors.join(), /1501 characters as LinkedIn counts them/);
   });
 
-  test('YouTube needs a title and a script; a script over 90 seconds or with an em dash is rejected', () => {
+  test('YouTube needs a title and a script; a script over 30 seconds or with an em dash is rejected', () => {
     const youtube = context({ network: 'youtube' });
-    assert.equal(validateDraft(draft(), youtube).ok, false);
-    const ok = validateDraft(draft({ title: 'Model 5 at half the price', script }), youtube);
+    assert.equal(validateDraft(draft({ worth_a_video: true }), youtube).ok, false);
+    const ok = validateDraft(draft({ title: 'Model 5 at half the price', script, worth_a_video: true }), youtube);
     assert.equal(ok.ok, true);
-    if (ok.ok) assert.equal(ok.draft.script?.duration_s, 40);
-    assert.equal(validateDraft(draft({ title: 'Model 5', script: { ...script, duration_s: 120 } }), youtube).ok, false);
-    const dashed = { ...script, shots: [{ ...script.shots[0]!, voiceover: 'Model 5 — out now.' }] };
-    assert.equal(validateDraft(draft({ title: 'Model 5', script: dashed }), youtube).ok, false);
+    if (ok.ok) assert.equal(ok.draft.script?.duration_s, 25);
+    assert.equal(validateDraft(draft({ title: 'Model 5', script: { ...script, duration_s: 45 }, worth_a_video: true }), youtube).ok, false);
+    const dashed = { ...script, shots: [{ ...script.shots[0]!, voiceover: 'Model 5 — out now.' }, ...script.shots.slice(1)] };
+    assert.equal(validateDraft(draft({ title: 'Model 5', script: dashed, worth_a_video: true }), youtube).ok, false);
   });
 
-  test('a script too long for a short video is sent back', () => {
-    const shot = { visual: 'v'.repeat(150), voiceover: 'w'.repeat(150), on_screen_text: 't'.repeat(30) };
-    const long = { hook: 'Hook', shots: Array.from({ length: 12 }, () => shot), duration_s: 60 };
-    const result = validateDraft(draft({ script: long }), context({ network: 'tiktok' }));
-    assert.equal(result.ok, false);
-    if (!result.ok) assert.match(result.errors.join(), /The script is 3964 characters; keep it under 2500/);
+  test('a video script is short: few spoken words, a few shots, a key word on screen', () => {
+    const tiktok = context({ network: 'tiktok' });
+    const errors = (s: object) => {
+      const result = validateDraft(draft({ script: s, worth_a_video: true }), tiktok);
+      return result.ok ? '' : result.errors.join(' ');
+    };
+    const chatty = { ...script, shots: script.shots.map((s) => ({ ...s, voiceover: 'word '.repeat(30).trim() })) };
+    assert.match(errors(chatty), /The voiceover has 93 words; keep it under 75/);
+    assert.match(errors({ ...script, shots: script.shots.slice(0, 2) }), /2 shots; give 3 to 6/);
+    assert.match(errors({ ...script, shots: [{ ...script.shots[0]!, on_screen_text: 'Model 5 is now half the price' }, ...script.shots.slice(1)] }), /on_screen_text is 4 words at most/);
+    assert.match(errors({ ...script, shots: [{ ...script.shots[0]!, voiceover: '' }, ...script.shots.slice(1)] }), /Every shot needs a voiceover/);
   });
 
   test('Instagram needs a visual; X does not accept a script', () => {

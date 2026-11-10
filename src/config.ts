@@ -110,6 +110,14 @@ const configSchema = z.strictObject({
     fps: z.number().int().min(12).max(60),
     keepDays: z.number().positive(),
     theme: z.strictObject({ background: color, text: color, muted: color, accent: color }),
+    /** The English voiceover of videos: a Kokoro voice, run on this computer. */
+    voice: z.strictObject({
+      enabled: z.boolean(),
+      name: z.string().regex(/^[a-z]{2}_[a-z]+$/, 'a Kokoro voice like af_heart'),
+      speed: z.number().min(0.5).max(2),
+    }),
+    /** A music file of your own, under the voice. Empty: none. Mind its license. */
+    music: z.string(),
   }),
   paths: z.strictObject({
     database: z.string().min(1),

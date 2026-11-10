@@ -42,9 +42,16 @@ Sources are the same for every network. The same news can go out on several netw
 Made on your computer, free, and sent as a reply to the draft card:
 
 - **Carousels** (Instagram always, other networks when Mistral asks for an image): Mistral's small model cuts the post into 3 to 6 slides (hook, one idea per slide, takeaway), checked like any text, then drawn as 1080 × 1350 PNGs. They arrive as files, so Telegram does not recompress them.
-- **Videos** (TikTok and YouTube Shorts): the script becomes a 1080 × 1920 MP4. The hook comes in word by word, each shot shows its on-screen text big with its voiceover as a caption, and a last scene lists the sources. No sound yet: add a voice or music in the app.
+- **Videos** (TikTok and YouTube Shorts), 30 seconds at most, made only when the news is worth one (Mistral can answer "not today"):
+  - an **English voiceover** by [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (Apache 2.0), run on your computer, `af_heart` by default. The first video downloads the model, about 300 MB;
+  - the voice sets the pace: one beat per spoken line, a hard cut, a short whoosh, the key word or number punching in;
+  - captions 2 or 3 words at a time, the word being said lit up, shown a moment ahead for muted viewers;
+  - frame 0 shows the hook, so it works as the thumbnail; everything stays out of the areas the apps cover;
+  - sound levelled to -14 LUFS; add your own music with `media.music` (mind its license);
+  - frames are drawn on several cores: a 20 s video takes about 20 s.
+- **What works this week**: once a week, Mistral studies what makes short tech videos perform right now (hooks, length, pace, captions, voice) with a web search, and the video scripts follow that brief. `/trends` shows it. About €0.07 a week.
 
-Colors, frame rate and how long files are kept (`keepDays`, 7 by default) are in the `media` section of `config/config.json`. Set `media.enabled` to `false` to turn visuals off. Text and fonts are rendered with [satori](https://github.com/vercel/satori) and [resvg](https://github.com/yisibl/resvg-js), in the Inter typeface (SIL Open Font License).
+Colors, frame rate, the voice (`media.voice`), music and how long files are kept (`keepDays`, 7 by default) are in the `media` section of `config/config.json`. Set `media.enabled` to `false` to turn visuals off. Text and fonts are rendered with [satori](https://github.com/vercel/satori) and [resvg](https://github.com/yisibl/resvg-js), in the Inter typeface (SIL Open Font License).
 
 ## Ground rules
 
@@ -172,7 +179,7 @@ Send `/start` to the bot.
 - **Free messages** go to Mistral, with the account voice and the pending draft of the network you opened last; `/reset` forgets the conversation.
   - A link to an X post (`x.com/…/status/…`) gets the advice and 3 replies. The post is read on X ($0.005), and the words around the link are taken as an instruction.
   - For a post without a link, paste its text after `/advice`.
-- **`/stats`**: posts per network, replies made, spend against the caps. **`/help`**: the help.
+- **`/stats`**: posts per network, replies made, spend against the caps. **`/trends`**: this week's short-video brief. **`/help`**: the help.
 
 A slot is skipped while a draft of the same network is still waiting for you. After the computer sleeps, only the slot in progress is handled: missed slots never pile up.
 

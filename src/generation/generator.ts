@@ -22,6 +22,7 @@ import {
 } from './draft.ts';
 import type { RankedTopic, Topic } from './rank.ts';
 import { rankTopics } from './rank.ts';
+import { latestVideoTrends } from './trends.ts';
 
 export type GeneratorDeps = {
   db: Db;
@@ -139,7 +140,8 @@ async function draftOnce(
   feedback: string[],
 ): Promise<RawAttempt> {
   const { config, gateway, db } = deps;
-  const system = systemPrompt(deps.voice, excluded, network);
+  const trends = NETWORK_SPECS[network].video ? latestVideoTrends(db, deps.now())?.brief : undefined;
+  const system = systemPrompt(deps.voice, excluded, network, trends);
   const jsonSchema = draftJsonSchema(network);
   const input = draftInput(topic, deps.now(), feedback, recentPosts(db, network));
   const model = config.mistral.models.draft;
@@ -267,6 +269,13 @@ export async function generateDraft(
         mode = 'two_step';
         attempt--;
         continue;
+      }
+      const verdict = result.raw as { worth_a_video?: unknown; why_it_matters?: unknown } | undefined;
+      if (NETWORK_SPECS[network].video && result.jsonParsed && verdict?.worth_a_video === false) {
+        // Mistral judged the news too flat for a short video: no video today rather than a weak one.
+        const why = typeof verdict.why_it_matters === 'string' ? verdict.why_it_matters.slice(0, 300) : '';
+        const shown = why && deps.filter.findInText(why).length === 0 ? `: ${why}` : '.';
+        return { status: 'no_topic', detail: `Not worth a video today${shown}`, topic, attempts };
       }
       let validation = result.jsonParsed
         ? validateDraft(result.raw, {

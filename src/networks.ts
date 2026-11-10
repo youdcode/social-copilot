@@ -40,9 +40,24 @@ export function xLength(text: string): number {
   return twitterText.parseTweet(text).weightedLength;
 }
 
-export const MAX_VIDEO_SECONDS = 90;
+/** Short videos are made automatically: motion design and an English voice. Past 30 s, people swipe. */
+export const MAX_VIDEO_SECONDS = 30;
+/** About 2.5 words a second of voice. */
+export const MAX_SPOKEN_WORDS = 75;
+/** Text on screen is a key word or number, never a sentence. */
+export const MAX_SCREEN_WORDS = 4;
+export const MIN_SHOTS = 3;
+export const MAX_SHOTS = 6;
+
+const VIDEO_RULES = [
+  `A vertical video of ${MAX_VIDEO_SECONDS} seconds at most, made automatically: motion design with an English voiceover. Write its script.`,
+  `${MAX_SPOKEN_WORDS} spoken words at most in total, in short punchy sentences: nobody reads or listens to more.`,
+  'The hook is spoken and on screen in the first 2 seconds: a bold claim, a number, or a question.',
+  `${MIN_SHOTS + 1} to ${MAX_SHOTS} shots, each a new beat every 3 to 5 seconds. voiceover: one short sentence. on_screen_text: 1 to ${MAX_SCREEN_WORDS} words, the key word or number of that sentence, never the sentence itself. visual: what the motion design shows, in a few words.`,
+  'worth_a_video: false when the news has nothing punchy enough for a short video; no video is made that day, and that is fine.',
+];
 /** Characters of a whole video script (hook and shots): what fits in a short video, and in a Telegram message. */
-export const MAX_SCRIPT_LENGTH = 2500;
+export const MAX_SCRIPT_LENGTH = 1200;
 export const MAX_TITLE_LENGTH = 100;
 
 export const NETWORK_SPECS: Record<Network, NetworkSpec> = {
@@ -123,11 +138,7 @@ export const NETWORK_SPECS: Record<Network, NetworkSpec> = {
     title: false,
     assetRequired: false,
     composeUrl: 'https://www.tiktok.com/upload',
-    rules: [
-      `A short vertical video of ${MAX_VIDEO_SECONDS} seconds at most, filmed by the operator: write its script.`,
-      'The hook must grab attention in the first 2 seconds. Each shot gives what to show, what to say, and the text on screen.',
-      'The caption (text field) is 300 characters max, with at most 3 hashtags.',
-    ],
+    rules: [...VIDEO_RULES, 'The caption (text field) is 300 characters max, with at most 3 hashtags.'],
   },
   youtube: {
     name: 'YouTube Shorts',
@@ -139,9 +150,8 @@ export const NETWORK_SPECS: Record<Network, NetworkSpec> = {
     assetRequired: false,
     composeUrl: 'https://studio.youtube.com/',
     rules: [
-      `A YouTube Short of ${MAX_VIDEO_SECONDS} seconds at most, filmed by the operator: write its script.`,
+      ...VIDEO_RULES,
       `A title of ${MAX_TITLE_LENGTH} characters max, specific and searchable, no clickbait.`,
-      'The hook must grab attention in the first 2 seconds. Each shot gives what to show, what to say, and the text on screen.',
       'The description (text field) is 1,000 characters max and lists the sources.',
     ],
   },

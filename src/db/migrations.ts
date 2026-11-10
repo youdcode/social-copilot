@@ -224,4 +224,13 @@ export const MIGRATIONS: readonly string[] = [
     created_at TEXT NOT NULL
   ) WITHOUT ROWID;
   `,
+  `
+  -- Weekly study of what works in short videos; video scripts follow the latest one.
+  CREATE TABLE video_trends (
+    id INTEGER PRIMARY KEY,
+    brief TEXT NOT NULL,
+    refs TEXT NOT NULL CHECK (json_valid(refs)),
+    created_at TEXT NOT NULL
+  );
+  `,
 ];

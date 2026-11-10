@@ -4,6 +4,7 @@ import { purgeOldMedia } from './media/studio.ts';
 import type { Db } from './db/database.ts';
 import type { ClusterCache, GeneratorDeps, SlotOutcome } from './generation/generator.ts';
 import { generateDraft } from './generation/generator.ts';
+import { studyVideoTrends, TRENDS_EVERY_DAYS } from './generation/trends.ts';
 import { enabledNetworks } from './config.ts';
 import { NETWORK_SPECS, type Network } from './networks.ts';
 import { createSerialQueue, type SerialQueue } from './queue.ts';
@@ -186,6 +187,15 @@ async function heartbeat(deps: ServiceDeps, state: ServiceState): Promise<void> 
         `Watch: X ${report.x ? `${report.x.newPosts} post(s) from ${report.x.polled} account(s)` : 'not read'}, mentions ${report.mentions ?? 'not read'}, RSS ${report.rssNew}, HN ${report.hnNew}`,
       );
       for (const problem of report.problems) deps.log(problem);
+    }
+    // Once a week, before the video slots that follow it: what works in short videos right now.
+    if (enabledNetworks(config).some((n) => NETWORK_SPECS[n].video) && jobDue(db, 'video_trends', TRENDS_EVERY_DAYS * 24 * 60, deps.now())) {
+      markJob(db, 'video_trends', deps.now());
+      try {
+        await studyVideoTrends(deps);
+      } catch (error) {
+        deps.log(`Video trends: ${(error as Error).message}`);
+      }
     }
     await runSlotsIfDue(deps, state);
   } catch (error) {

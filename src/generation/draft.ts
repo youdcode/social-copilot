@@ -2,7 +2,18 @@ import { z } from 'zod';
 import type { ForbiddenTermsFilter } from '../filters/forbidden-terms.ts';
 import { normalizeForMatching } from '../filters/forbidden-terms.ts';
 import type { WebReference, JsonSchemaSpec } from '../mistral/gateway.ts';
-import { graphemeLength, MAX_SCRIPT_LENGTH, MAX_TITLE_LENGTH, MAX_VIDEO_SECONDS, NETWORK_SPECS, type Network } from '../networks.ts';
+import {
+  graphemeLength,
+  MAX_SCREEN_WORDS,
+  MAX_SCRIPT_LENGTH,
+  MAX_SHOTS,
+  MAX_SPOKEN_WORDS,
+  MAX_TITLE_LENGTH,
+  MAX_VIDEO_SECONDS,
+  MIN_SHOTS,
+  NETWORK_SPECS,
+  type Network,
+} from '../networks.ts';
 import { hoursBetween } from '../time.ts';
 import type { Candidate } from './candidates.ts';
 import type { RankedTopic } from './rank.ts';
@@ -49,6 +60,8 @@ export type DraftJson = {
   asset_request: AssetRequest | null;
   title: string | null;
   script: VideoScript | null;
+  /** Video networks: false when the news is not worth a video today. Always true elsewhere. */
+  worth_a_video: boolean;
 };
 
 /** The written part of a draft on one network: its text, plus a title (YouTube) or a script (video networks). */
@@ -68,6 +81,7 @@ export function draftSchemaFor(network: Network) {
     topic: z.string().min(3).max(140),
     pillar: z.enum(PILLARS),
     ...contentSchemaFor(network).shape,
+    ...(spec.video ? { worth_a_video: z.boolean() } : {}),
     why_it_matters: z.string().min(1).max(400),
     sources: z.array(z.string().min(1)).min(1).max(8),
     asset_request: spec.assetRequired ? assetSchema : z.union([z.null(), assetSchema]),
@@ -131,7 +145,12 @@ function whatYouWrite(network: Network): string {
   return `${spec.textName}s for an anonymous ${spec.name} account`;
 }
 
-export function systemPrompt(voice: string, excludedTopics: readonly string[], network: Network = 'x'): string {
+export function systemPrompt(
+  voice: string,
+  excludedTopics: readonly string[],
+  network: Network = 'x',
+  videoTrends?: string,
+): string {
   const spec = NETWORK_SPECS[network];
   const asset = spec.video
     ? 'Set asset_request to null: the script already says what to film.'
@@ -149,7 +168,7 @@ How to write:
 - Never claim the account tried, tested, used or measured anything: it did not. Say what is worth trying, or what you would check first.
 - Vary the angle and the shape: do not reuse the opening or the structure of the account's recent posts listed in the message.
 - No links in the text${network === 'youtube' ? ', except the sources listed at the end of the description' : ''}: sources go in the sources field.
-
+${spec.video && videoTrends ? `\nWhat works in short videos this week (from a web check; apply it to the script, never copy a creator):\n${videoTrends}\n` : ''}
 Rules:
 ${spec.rules.map((rule) => `- ${rule}`).join('\n')}
 - Native English, never translated. No hype words.
@@ -288,6 +307,16 @@ export function checkContent(
       if (scriptLength > MAX_SCRIPT_LENGTH) {
         errors.push(`The script is ${scriptLength} characters; keep it under ${MAX_SCRIPT_LENGTH}, with fewer or shorter shots.`);
       }
+      const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
+      const spoken = words(content.script.hook) + content.script.shots.reduce((total, s) => total + words(s.voiceover), 0);
+      if (spoken > MAX_SPOKEN_WORDS) errors.push(`The voiceover has ${spoken} words; keep it under ${MAX_SPOKEN_WORDS}.`);
+      if (content.script.shots.length < MIN_SHOTS || content.script.shots.length > MAX_SHOTS) {
+        errors.push(`The script has ${content.script.shots.length} shots; give ${MIN_SHOTS} to ${MAX_SHOTS}.`);
+      }
+      if (content.script.shots.some((s) => !s.voiceover.trim())) errors.push('Every shot needs a voiceover sentence.');
+      if (content.script.shots.some((s) => words(s.on_screen_text) > MAX_SCREEN_WORDS)) {
+        errors.push(`on_screen_text is ${MAX_SCREEN_WORDS} words at most: the key word or number, not the sentence.`);
+      }
     }
   }
   if ([content.text, content.title ?? '', ...scriptStrings(content.script)].some((t) => t.includes('—'))) {
@@ -333,6 +362,7 @@ export function validateDraft(raw: unknown, ctx: ValidationContext): ValidationR
     asset_request: parsed.data.asset_request ?? null,
     title: 'title' in parsed.data ? (parsed.data.title as string) : null,
     script: 'script' in parsed.data ? (parsed.data.script as VideoScript) : null,
+    worth_a_video: 'worth_a_video' in parsed.data ? (parsed.data.worth_a_video as boolean) : true,
   };
   const content = checkContent({ text: draft.text, title: draft.title, script: draft.script }, ctx.filter, ctx.network);
   const errors = [...content.errors];

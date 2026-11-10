@@ -4,7 +4,8 @@ import type { AssistantDeps } from '../assistant.ts';
 import type { Draft } from '../drafts.ts';
 import { NETWORK_SPECS } from '../networks.ts';
 import { designCarousel, renderCarousel } from './carousel.ts';
-import { planScenes, renderVideo } from './video.ts';
+import { buildTimeline, estimateSeconds, mixAudio, renderVideo, spokenLines } from './video.ts';
+import { speakLines } from './voice.ts';
 
 export type MediaResult = { kind: 'images'; files: string[] } | { kind: 'video'; file: string; seconds: number };
 
@@ -37,11 +38,23 @@ export async function produceMedia(deps: AssistantDeps, draft: Draft, outDir: st
   const sources = [...draft.sources, draft.triggerUrl];
 
   if (kind === 'video') {
-    const file = path.join(outDir, `${draft.network}-${draft.id}.mp4`);
     const started = Date.now();
-    const result = await renderVideo(planScenes(draft.script!, sources), file, media);
-    deps.log(`Video of draft #${draft.id}: ${result.seconds.toFixed(1)} s, ${result.drawn}/${result.frames} frames drawn in ${((Date.now() - started) / 1000).toFixed(1)} s.`);
-    return { kind, file, seconds: result.seconds };
+    const lines = spokenLines(draft.script!);
+    // The voice sets the pace: each beat lasts as long as its line is said.
+    const voices = media.voice.enabled
+      ? await speakLines(lines, outDir, { voice: media.voice.name, speed: media.voice.speed })
+      : [];
+    const timeline = buildTimeline(draft.script!, sources, voices.length > 0 ? voices.map((v) => v.seconds) : lines.map(estimateSeconds));
+    const file = path.join(outDir, `${draft.network}-${draft.id}.mp4`);
+    const silent = voices.length > 0 || media.music ? path.join(outDir, 'picture.mp4') : file;
+    await renderVideo(timeline, silent, media);
+    if (silent !== file) {
+      await mixAudio(timeline, voices.map((v) => v.file), silent, file, { ffmpeg: media.ffmpeg, ...(media.music ? { music: media.music } : {}) });
+      rmSync(silent, { force: true });
+      for (const voice of voices) rmSync(voice.file, { force: true });
+    }
+    deps.log(`Video of draft #${draft.id}: ${timeline.seconds.toFixed(1)} s, made in ${((Date.now() - started) / 1000).toFixed(1)} s.`);
+    return { kind, file, seconds: timeline.seconds };
   }
 
   const slides = await designCarousel(deps, draft);

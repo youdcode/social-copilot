@@ -169,7 +169,13 @@
       "text": "#ffffff",
       "muted": "#9aa4b2",
       "accent": "#7c5cff"
-    }
+    },
+    "voice": {
+      "enabled": true,
+      "name": "af_heart",
+      "speed": 1.1
+    },
+    "music": ""
   },
   "paths": {
     "database": "data/social-copilot.sqlite",

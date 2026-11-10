@@ -14,6 +14,7 @@ const EXPECTED_TABLES = [
   'slot_runs',
   'spend',
   'topic_research',
+  'video_trends',
   'x_cursors',
   'x_posts',
   'x_reads',

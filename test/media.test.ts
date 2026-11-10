@@ -10,7 +10,9 @@ import { getDraft } from '../src/drafts.ts';
 import { cleanStat, designCarousel, renderCarousel, SLIDE_HEIGHT, SLIDE_WIDTH } from '../src/media/carousel.ts';
 import { pngSize, withoutEmoji } from '../src/media/render.ts';
 import { mediaKind, purgeOldMedia } from '../src/media/studio.ts';
-import { planScenes, renderVideo } from '../src/media/video.ts';
+import { buildTimeline, captionGroups, estimateSeconds, frameAt, mixAudio, renderVideo, timeWords } from '../src/media/video.ts';
+import { latestVideoTrends, studyVideoTrends } from '../src/generation/trends.ts';
+import { systemPrompt } from '../src/generation/draft.ts';
 import { createSerialQueue } from '../src/queue.ts';
 import { createMediaDelivery } from '../src/telegram/media.ts';
 import { insertDraft, scriptedGateway, testConfig, testDb, testFilter } from './helpers.ts';
@@ -87,32 +89,94 @@ describe('video', () => {
     duration_s: 12,
     shots: [
       { visual: 'Pricing page', voiceover: 'Model 5 now costs half as much.', on_screen_text: '-50%' },
-      { visual: 'Terminal', voiceover: '', on_screen_text: 'Benchmarks first' },
+      { visual: 'Terminal', voiceover: 'Check the benchmarks first.', on_screen_text: 'Benchmarks first' },
     ],
   };
 
-  test('scenes: the hook, one per shot sharing the length, then the sources', () => {
-    const scenes = planScenes(script, ['https://lab.test/a', 'https://www.lab.test/b', 'https://news.test/c']);
-    assert.deepEqual(scenes.map((s) => s.kind), ['hook', 'shot', 'shot', 'outro']);
-    assert.equal(scenes[1]!.big, '-50%');
-    assert.equal(scenes[1]!.caption, 'Model 5 now costs half as much.');
-    assert.equal(scenes[1]!.seconds, 3.75);
-    assert.equal(scenes[3]!.caption, 'lab.test · news.test');
+  test('the edit: one beat per spoken line, as long as the voice, then the sources', () => {
+    const timeline = buildTimeline(script, ['https://lab.test/a', 'https://www.lab.test/b', 'https://news.test/c'], [1.5, 2, 1.2]);
+    assert.deepEqual(timeline.beats.map((b) => b.kind), ['hook', 'shot', 'shot', 'outro']);
+    assert.equal(timeline.beats[1]!.big, '-50%');
+    assert.equal(timeline.beats[1]!.start, 1.68);
+    assert.equal(timeline.beats[3]!.note, 'lab.test · news.test');
+    assert.equal(Number(timeline.seconds.toFixed(2)), 6.64);
+    // Words of a line are timed within it, in order, the last ending with the line.
+    const words = timeline.beats[1]!.words;
+    assert.deepEqual(words.map((w) => w.text), ['Model', '5', 'now', 'costs', 'half', 'as', 'much.']);
+    assert.ok(words.every((w, i) => w.start < w.end && (i === 0 || w.start === words[i - 1]!.end)));
+    assert.equal(Number(words.at(-1)!.end.toFixed(6)), Number((1.68 + 2).toFixed(6)));
   });
 
-  test('renders an MP4 with ffmpeg, drawing only the entrances', { skip: !ffmpegAvailable && 'ffmpeg is not installed' }, async () => {
-    const file = path.join(mkdtempSync(path.join(os.tmpdir(), 'video-')), 'v.mp4');
-    const result = await renderVideo(planScenes({ ...script, duration_s: 6 }, []), file, { theme, fps: 12, ffmpeg: 'ffmpeg' });
-    assert.ok(statSync(file).size > 1000);
-    assert.ok(result.drawn < result.frames / 2);
+  test('without a voice, a line lasts as long as it takes to read it', () => {
+    assert.equal(estimateSeconds('one two three four five six seven eight nine ten eleven twelve thirteen'), 5.2);
+  });
+
+  test('captions come 2 or 3 words at a time, broken at punctuation', () => {
+    const words = timeWords('Cheaper now. But check the benchmarks first', 0, 3);
+    assert.deepEqual(captionGroups(words).map((g) => g.map((w) => w.text).join(' ')), ['Cheaper now.', 'But check the', 'benchmarks first']);
+  });
+
+  test('frame 0 already shows the hook: it is the thumbnail', () => {
+    const timeline = buildTimeline(script, [], [1, 1, 1]);
+    const frame = JSON.stringify(frameAt(timeline, 0, theme));
+    for (const word of ['Half', 'the', 'price?']) assert.ok(frame.includes(`"${word}"`), word);
+  });
+
+  test('renders an MP4 with ffmpeg, then lays the voice and the cut sounds under it', { skip: !ffmpegAvailable && 'ffmpeg is not installed' }, async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'video-'));
+    const timeline = buildTimeline(script, [], [0.6, 0.6, 0.6]);
+    await renderVideo(timeline, path.join(dir, 'picture.mp4'), { theme, fps: 8, ffmpeg: 'ffmpeg' });
+    const voices = [0, 1, 2].map((i) => {
+      const file = path.join(dir, `voice-${i}.wav`);
+      execFileSync('ffmpeg', ['-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.6', '-ar', '24000', file]);
+      return file;
+    });
+    await mixAudio(timeline, voices, path.join(dir, 'picture.mp4'), path.join(dir, 'final.mp4'), { ffmpeg: 'ffmpeg' });
+    const streams = execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,sample_rate', '-of', 'csv=p=0', path.join(dir, 'final.mp4')]).toString();
+    assert.match(streams, /video/);
+    assert.match(streams, /48000,audio|audio,48000/);
   });
 
   test('a missing ffmpeg is told plainly', async () => {
     const file = path.join(mkdtempSync(path.join(os.tmpdir(), 'video-')), 'v.mp4');
     await assert.rejects(
-      renderVideo(planScenes(script, []), file, { theme, fps: 12, ffmpeg: '/nonexistent/ffmpeg' }),
+      renderVideo(buildTimeline(script, [], [0.5, 0.5, 0.5]), file, { theme, fps: 8, ffmpeg: '/nonexistent/ffmpeg' }),
       /ffmpeg cannot start/,
     );
+  });
+});
+
+describe('weekly video trends', () => {
+  test('a study is stored, then fed to video scripts only, for two weeks', async () => {
+    const searches: string[] = [];
+    const base = scriptedGateway({});
+    const d: AssistantDeps = {
+      ...deps({}),
+      gateway: {
+        ...base.gateway,
+        async searchAndAnswer(o) {
+          searches.push(o.instructions);
+          return { text: '- Hook with a number in the first second.\n- Cut every 2 to 3 seconds.', references: [], toolCalls: 1, usage: { model: 'mistral-medium-3-5', promptTokens: 1, completionTokens: 1, connectorTokens: 0, webSearchCalls: 1 } };
+        },
+      },
+    };
+    const study = await studyVideoTrends(d);
+    assert.match(study!.brief, /Cut every 2 to 3 seconds/);
+    assert.match(searches[0]!, /short vertical videos about tech/);
+    assert.equal(latestVideoTrends(d.db, now)?.brief, study!.brief);
+    assert.equal(latestVideoTrends(d.db, new Date(now.getTime() + 15 * 86_400_000)), undefined);
+    assert.match(systemPrompt('Dry.', [], 'tiktok', study!.brief), /What works in short videos this week[^]*Cut every 2 to 3 seconds/);
+    assert.doesNotMatch(systemPrompt('Dry.', [], 'x', study!.brief), /What works in short videos/);
+  });
+
+  test('a study that ran no search, or names a forbidden term, is not kept', async () => {
+    const base = scriptedGateway({});
+    const answer = (text: string, toolCalls: number) => ({
+      ...deps({}),
+      gateway: { ...base.gateway, searchAndAnswer: async () => ({ text, references: [], toolCalls, usage: { model: 'mistral-medium-3-5', promptTokens: 1, completionTokens: 1, connectorTokens: 0, webSearchCalls: 0 } }) },
+    });
+    assert.equal(await studyVideoTrends(answer('- A long enough brief without any search at all.', 0)), undefined);
+    assert.equal(await studyVideoTrends(answer('- Copy what Acme does in every single video now.', 1)), undefined);
   });
 });
 

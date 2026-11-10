@@ -20,6 +20,7 @@ import {
   type PromptKind,
 } from '../drafts.ts';
 import { generateDraft } from '../generation/generator.ts';
+import { latestVideoTrends } from '../generation/trends.ts';
 import { isNetwork, NETWORK_SPECS, type Network } from '../networks.ts';
 import type { SerialQueue } from '../queue.ts';
 import type { MediaDelivery } from './media.ts';
@@ -67,6 +68,7 @@ export const BOT_COMMANDS = [
   { command: 'stats', description: 'Posts, replies and spend of the day' },
   { command: 'reset', description: 'Forget the conversation with Mistral' },
   { command: 'advice', description: 'Advice and 3 replies for a pasted post' },
+  { command: 'trends', description: 'What works in short videos this week' },
   { command: 'help', description: 'Help' },
 ];
 
@@ -181,6 +183,14 @@ export function createBot(token: string, deps: BotDeps, options: { botInfo?: Use
   bot.command('help', (ctx) => ctx.reply(HELP_TEXT, { parse_mode: 'HTML' }));
   bot.command('stats', (ctx) => ctx.reply(statsText(dailyStats(db, config, deps.now())), { parse_mode: 'HTML' }));
   bot.command('reset', (ctx) => ctx.reply(`Conversation forgotten (${resetChat(db)} message(s)).`));
+  bot.command('trends', (ctx) => {
+    const trends = latestVideoTrends(db, deps.now());
+    return ctx.reply(
+      trends
+        ? `What works in short videos (studied ${trends.createdAt.slice(0, 10)}):\n\n${trends.brief}`
+        : 'No study yet: it runs once a week when a video network is on.',
+    );
+  });
   bot.command('advice', async (ctx) => {
     const text = ctx.match.trim();
     if (text === '') {

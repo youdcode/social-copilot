@@ -239,7 +239,8 @@ describe('several networks', () => {
     const short = {
       ...goodDraft,
       title: 'Model 5 at half the price',
-      script: { hook: 'Half the price?', shots: [{ visual: 'Pricing page', voiceover: 'Model 5 is out.', on_screen_text: '-50%' }], duration_s: 30 },
+      script: { hook: 'Half the price?', shots: [{ visual: 'Pricing page', voiceover: 'Model 5 is out.', on_screen_text: '-50%' }, { visual: 'Chart', voiceover: 'Same quality, half the price.', on_screen_text: 'Same quality' }, { visual: 'Terminal', voiceover: 'Check the benchmarks first.', on_screen_text: 'Benchmarks?' }], duration_s: 25 },
+      worth_a_video: true,
     };
     const base = fakeGateway([short]);
     const gateway: MistralGateway = {
@@ -256,7 +257,16 @@ describe('several networks', () => {
     assert.match(searches[0]!.instructions, /short videos for an anonymous YouTube Shorts account/);
     assert.equal(proposed[0]!.title, 'Model 5 at half the price');
     const row = d.db.prepare('SELECT title, script FROM drafts').get() as { title: string; script: string };
-    assert.equal(JSON.parse(row.script).duration_s, 30);
+    assert.equal(JSON.parse(row.script).duration_s, 25);
+  });
+
+  test('a news not worth a video makes no video that day', async () => {
+    const flat = { ...goodDraft, title: 'Model 5', script: { hook: 'h', shots: [], duration_s: 10 }, worth_a_video: false, why_it_matters: 'Nothing to show.' };
+    const { d, proposed } = deps(fakeGateway([flat]));
+    const outcome = await generateDraft(d, 'tiktok', slot, { save: true });
+    assert.equal(outcome.status, 'no_topic');
+    assert.match(outcome.detail, /Not worth a video today/);
+    assert.equal(proposed.length, 0);
   });
 
   test('a draft that lands on a topic already covered moves on to the next topic', async () => {
