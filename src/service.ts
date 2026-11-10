@@ -1,4 +1,6 @@
+import path from 'node:path';
 import cron from 'node-cron';
+import { purgeOldMedia } from './media/studio.ts';
 import type { Db } from './db/database.ts';
 import type { ClusterCache, GeneratorDeps, SlotOutcome } from './generation/generator.ts';
 import { generateDraft } from './generation/generator.ts';
@@ -172,6 +174,8 @@ async function heartbeat(deps: ServiceDeps, state: ServiceState): Promise<void> 
     const { db, config } = deps;
     if (jobDue(db, 'purge', PURGE_EVERY_MINUTES, deps.now())) {
       const purged = purgeExpiredXText(db, config, deps.now());
+      const media = purgeOldMedia(path.join(path.dirname(config.paths.database), 'media'), config.media.keepDays, deps.now());
+      if (media > 0) deps.log(`Purge: ${media} old media folder(s) deleted.`);
       markJob(db, 'purge', deps.now());
       if (purged > 0) deps.log(`Purge: ${purged} X text(s) erased.`);
     }

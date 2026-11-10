@@ -146,6 +146,7 @@ How to write:
 - Do not just report the news: a news wire already did. Lead with a take: an opinion, a concrete consequence, who wins and who loses, a comparison with what existed before, a doubt, or the question people are actually asking.
 - When the web check reports what people say about it, use it to sharpen the take: agree, push back, or answer it.
 - Facts come from the sources; the opinion is the account's own and must read as an opinion, never as a fact.
+- Never claim the account tried, tested, used or measured anything: it did not. Say what is worth trying, or what you would check first.
 - Vary the angle and the shape: do not reuse the opening or the structure of the account's recent posts listed in the message.
 - No links in the text${network === 'youtube' ? ', except the sources listed at the end of the description' : ''}: sources go in the sources field.
 

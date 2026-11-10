@@ -11,8 +11,9 @@ A service that follows tech news, drafts posts for your social accounts and prop
   - length as each network counts it;
   - no forbidden term;
   - a fresh topic, not covered already.
+- **Visuals made on your computer**: carousels for Instagram (and for any post that calls for an image), motion design videos for TikTok and YouTube Shorts, sent under the draft card.
 - **Telegram**:
-  - draft cards with Copy, Posted, Edit and No;
+  - draft cards with Open, Copy, Posted, Edit and No;
   - posts worth a reply and replies received (X);
   - asset requests;
   - a free conversation with Mistral;
@@ -36,6 +37,15 @@ Sources are the same for every network. The same news can go out on several netw
 
 "Who to reply to" and "Replies received" work on X only, since X is the only network the service reads.
 
+## Visuals
+
+Made on your computer, free, and sent as a reply to the draft card:
+
+- **Carousels** (Instagram always, other networks when Mistral asks for an image): Mistral's small model cuts the post into 3 to 6 slides (hook, one idea per slide, takeaway), checked like any text, then drawn as 1080 × 1350 PNGs. They arrive as files, so Telegram does not recompress them.
+- **Videos** (TikTok and YouTube Shorts): the script becomes a 1080 × 1920 MP4. The hook comes in word by word, each shot shows its on-screen text big with its voiceover as a caption, and a last scene lists the sources. No sound yet: add a voice or music in the app.
+
+Colors, frame rate and how long files are kept (`keepDays`, 7 by default) are in the `media` section of `config/config.json`. Set `media.enabled` to `false` to turn visuals off. Text and fonts are rendered with [satori](https://github.com/vercel/satori) and [resvg](https://github.com/yisibl/resvg-js), in the Inter typeface (SIL Open Font License).
+
 ## Ground rules
 
 - **X is read only, through the official API.** No scraping, no browser automation: that is what gets accounts suspended. The X app is set to "Read only": its tokens cannot write.
@@ -43,6 +53,7 @@ Sources are the same for every network. The same news can go out on several netw
 - **Sourced or nothing.** A draft keeps only the URLs actually returned by Mistral's web search, plus the URL of the item that triggered it. With no source left, it is rejected.
 - **Nothing made up.**
   - The trigger must be less than 24 hours old.
+  - The account never claims it tried, tested or measured anything.
   - The prompt forbids numbers, quotes and dates absent from the sources.
   - "Edit" rewrites without web search, so it cannot add facts.
 - **Anonymity.** A list of forbidden terms (your name, city, company…) is checked in every draft, rewrite, reply and Mistral answer. Without that list, the service refuses to generate.
@@ -52,6 +63,7 @@ Sources are the same for every network. The same news can go out on several netw
 ## Requirements
 
 - macOS or Linux, with **Node 24 LTS** (see `.node-version` and `.nvmrc`). `npm install` refuses any other version.
+- **ffmpeg** for the videos (`brew install ffmpeg`, or `sudo apt install ffmpeg`). Without it, carousels still work and videos are skipped with a message.
 - A Mistral API key, ideally in an organization of its own.
 - A Telegram account.
 - Optional: an X developer account on pay-per-use, with credits, to watch X accounts and use the reply features. Without it, the watch reads RSS feeds and Hacker News only, and drafts are still written for every network.
@@ -155,7 +167,8 @@ Send `/start` to the bot.
   - **No**: optional reason, then a new topic for that network right away. A click Telegram sends twice does not start a second draft.
 - **Who to reply to** (X): among recent posts of the watched accounts, Mistral picks those worth a reply and writes 3 replies. Each one has a button that opens X's reply window on the post, the reply already in. A reply works best on a post less than an hour old.
 - **Replies received** (X): replies and mentions the account received, with the post they answer, advice and 3 replies. The bot tells you when new ones arrive.
-- **Asset requests**: type, brief and duration, with an "Asset ready" button.
+- **Visuals**: carousels and videos arrive under their card on their own (see [Visuals](#visuals)).
+- **Asset requests**: type, brief and duration, with an "Asset ready" button. Making the visual marks it ready.
 - **Free messages** go to Mistral, with the account voice and the pending draft of the network you opened last; `/reset` forgets the conversation.
   - A link to an X post (`x.com/…/status/…`) gets the advice and 3 replies. The post is read on X ($0.005), and the words around the link are taken as an instruction.
   - For a post without a link, paste its text after `/advice`.
@@ -253,7 +266,8 @@ No port is opened and no domain name is needed: the bot uses long polling.
 | `src/networks.ts` | Each network: format, limits, how length is counted, writing rules |
 | `src/sources`, `src/x` | RSS, Hacker News and X watch, mentions, OAuth 1.0a signing |
 | `src/generation` | Grouping into topics, ranking, writing, validation |
-| `src/telegram` | Bot, cards, menus |
+| `src/telegram` | Bot, cards, menus, sending visuals |
+| `src/media` | Carousels and videos: slide design, drawing, ffmpeg encoding |
 | `src/assistant.ts`, `src/replies.ts` | Edit, Talk to Mistral, reply advice and variants |
 | `src/spend.ts` | Spend counting and caps |
 | `src/db` | SQLite schema and migrations |

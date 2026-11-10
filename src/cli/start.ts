@@ -3,6 +3,7 @@ import { createSerialQueue } from '../queue.ts';
 import { requireSecrets } from '../secrets.ts';
 import { createServiceState, startService } from '../service.ts';
 import { BOT_COMMANDS, createBot, type BotDeps } from '../telegram/bot.ts';
+import { createMediaDelivery } from '../telegram/media.ts';
 import { createTelegramNotifier } from '../telegram/notifier.ts';
 import { explainTelegramError } from '../telegram/updates.ts';
 import { buildServiceDeps, runCli } from './context.ts';
@@ -22,7 +23,9 @@ await runCli(async () => {
   const state = createServiceState();
   const deps: BotDeps = { ...base, state, chatId, assistant: createSerialQueue() };
   const bot = createBot(telegram.TELEGRAM_BOT_TOKEN, deps);
-  deps.notifier = createTelegramNotifier(bot.api, chatId, deps.db, deps.config, deps.log);
+  // Images and videos take seconds to minutes: they have their own queue, so drafts and the bot never wait for them.
+  deps.media = createMediaDelivery(bot.api, chatId, deps, createSerialQueue());
+  deps.notifier = createTelegramNotifier(bot.api, chatId, deps.db, deps.config, deps.log, deps.media);
 
   const allowedUpdates = ['message', 'callback_query'] as const;
   try {

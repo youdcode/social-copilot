@@ -159,6 +159,18 @@
   "retention": {
     "xTextHours": 24
   },
+  "media": {
+    "enabled": true,
+    "ffmpeg": "ffmpeg",
+    "fps": 30,
+    "keepDays": 7,
+    "theme": {
+      "background": "#0b0d12",
+      "text": "#ffffff",
+      "muted": "#9aa4b2",
+      "accent": "#7c5cff"
+    }
+  },
   "paths": {
     "database": "data/social-copilot.sqlite",
     "lock": "data/social-copilot.lock",

@@ -22,6 +22,7 @@ import {
 import { generateDraft } from '../generation/generator.ts';
 import { isNetwork, NETWORK_SPECS, type Network } from '../networks.ts';
 import type { SerialQueue } from '../queue.ts';
+import type { MediaDelivery } from './media.ts';
 import {
   advisePasted,
   findReplyTargets,
@@ -57,6 +58,8 @@ export type BotDeps = ServiceDeps & {
   chatId: number;
   /** Mistral and X work asked from the bot, run one at a time outside the update handlers so buttons stay responsive. */
   assistant: SerialQueue;
+  /** Images and videos for drafts. Absent: none are made. */
+  media?: MediaDelivery;
 };
 
 export const BOT_COMMANDS = [
@@ -400,7 +403,8 @@ export function createBot(token: string, deps: BotDeps, options: { botInfo?: Use
       await editCard(current.telegramMessageId, {
         text: `${draftCard(current, copyMax).text}\n\n✏️ Replaced by the edited version below.`,
       });
-      await sendDraftCard(bot.api, chatId, db, config, current.id, messageId);
+      const card = await sendDraftCard(bot.api, chatId, db, config, current.id, messageId);
+      if (card !== undefined) deps.media?.deliver(current.id, card);
     });
     return true;
   };

@@ -9,6 +9,7 @@ export const DEFAULT_CONFIG_PATH = path.join(PROJECT_ROOT, 'config', 'config.jso
 const clockTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'expected HH:MM');
 const xHandle = z.string().regex(/^[A-Za-z0-9_]{1,15}$/, 'invalid X handle (no @, 15 characters at most)');
 const amount = z.number().nonnegative();
+const color = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'expected a color like #1a2b3c');
 const vatMultiplier = z.number().min(1).max(2);
 
 const timeZone = z.string().refine((value) => {
@@ -100,6 +101,15 @@ const configSchema = z.strictObject({
   }),
   retention: z.strictObject({
     xTextHours: z.number().positive(),
+  }),
+  /** Images and videos made for drafts, on this computer. */
+  media: z.strictObject({
+    enabled: z.boolean(),
+    /** ffmpeg assembles the videos: a command on the PATH, or a full path. */
+    ffmpeg: z.string().min(1),
+    fps: z.number().int().min(12).max(60),
+    keepDays: z.number().positive(),
+    theme: z.strictObject({ background: color, text: color, muted: color, accent: color }),
   }),
   paths: z.strictObject({
     database: z.string().min(1),

@@ -4,6 +4,7 @@ import type { Db } from '../db/database.ts';
 import { getDraft, setDraftMessage } from '../drafts.ts';
 import type { Notifier } from '../notifier.ts';
 import { draftCard, type Card } from './format.ts';
+import type { MediaDelivery } from './media.ts';
 
 /**
  * Sends a card in HTML, link previews off, optionally as a reply to another message. Parts too long to fit go first,
@@ -45,6 +46,7 @@ export function createTelegramNotifier(
   db: Db,
   config: AppConfig,
   log: (message: string) => void,
+  media?: MediaDelivery,
 ): Notifier {
   const safely = async (what: string, send: () => Promise<unknown>) => {
     try {
@@ -58,7 +60,8 @@ export function createTelegramNotifier(
       if (draft.id === undefined) return;
       const id = draft.id;
       try {
-        await sendDraftCard(api, chatId, db, config, id);
+        const messageId = await sendDraftCard(api, chatId, db, config, id);
+        if (messageId !== undefined) media?.deliver(id, messageId);
       } catch (error) {
         // The draft stays pending and blocks its network's next slots: the operator must know it exists.
         log(`Telegram send failed (draft #${id}): ${(error as Error).message}`);
