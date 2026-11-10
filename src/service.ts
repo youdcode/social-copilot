@@ -5,6 +5,7 @@ import type { Db } from './db/database.ts';
 import type { ClusterCache, GeneratorDeps, SlotOutcome } from './generation/generator.ts';
 import { generateDraft } from './generation/generator.ts';
 import { studyVideoTrends, TRENDS_EVERY_DAYS } from './generation/trends.ts';
+import { proposeVideoIdea } from './generation/ideas.ts';
 import { enabledNetworks } from './config.ts';
 import { NETWORK_SPECS, type Network } from './networks.ts';
 import { createSerialQueue, type SerialQueue } from './queue.ts';
@@ -141,7 +142,11 @@ export async function runSlotsIfDue(
     const name = NETWORK_SPECS[network].name;
     let outcome: SlotOutcome;
     try {
-      outcome = await generateDraft(deps, network, slot, { save: true, clusterCache: state.clusterCache });
+      // Video networks pitch an idea first when asked to: a video is only made once accepted in the bot.
+      outcome =
+        NETWORK_SPECS[network].video && config.media.askBeforeVideo
+          ? await proposeVideoIdea(deps, network, slot, { clusterCache: state.clusterCache })
+          : await generateDraft(deps, network, slot, { save: true, clusterCache: state.clusterCache });
     } catch (error) {
       outcome = { status: 'failed', detail: (error as Error).message, attempts: [] };
       await deps.notifier.alert(`${name} slot ${key} failed: ${outcome.detail}`);

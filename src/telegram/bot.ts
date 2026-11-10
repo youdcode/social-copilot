@@ -21,6 +21,7 @@ import {
 } from '../drafts.ts';
 import { generateDraft } from '../generation/generator.ts';
 import { latestVideoTrends } from '../generation/trends.ts';
+import { answerIdea, excludeIdeaTopic, getIdea, ideaTopic, proposeVideoIdea } from '../generation/ideas.ts';
 import { isNetwork, NETWORK_SPECS, type Network } from '../networks.ts';
 import type { SerialQueue } from '../queue.ts';
 import type { MediaDelivery } from './media.ts';
@@ -42,6 +43,7 @@ import { pollMentions } from '../x/mentions.ts';
 import {
   assetCard,
   chatHint,
+  ideaCard,
   draftCard,
   HELP_TEXT,
   mainMenu,
@@ -347,6 +349,53 @@ export function createBot(token: string, deps: BotDeps, options: { botInfo?: Use
     await editCard(ctx.callbackQuery.message?.message_id, assetCard(getDraft(db, id)!));
     const draft = getDraft(db, id)!;
     if (draft.telegramMessageId !== ctx.callbackQuery.message?.message_id) await refreshDraftCard(draft);
+  });
+
+  // Video ideas: nothing costly is made before Make the video.
+
+  bot.callbackQuery(/^i:(\d+):(make|no)$/, async (ctx) => {
+    const id = Number(ctx.match[1]);
+    const make = ctx.match[2] === 'make';
+    const idea = getIdea(db, id);
+    if (!idea || !answerIdea(db, id, make ? 'accepted' : 'refused', deps.now())) {
+      await answer(ctx, 'Already handled.');
+      return;
+    }
+    chatNetwork = idea.network;
+    const name = NETWORK_SPECS[idea.network].name;
+    // Queued first, like No on a draft: whatever Telegram does with the messages below, the work happens.
+    void deps.state.generation.run(async () => {
+      try {
+        if (!make) {
+          excludeIdeaTopic(db, idea, config.generation.exclusionDays, deps.now());
+          const slot = currentSlot(deps.now(), config.networks[idea.network].slots, config.timezone);
+          const outcome = await proposeVideoIdea(deps, idea.network, slot, { clusterCache: deps.state.clusterCache });
+          if (outcome.status === 'no_topic') await say(`No other ${name} video idea for now: ${outcome.detail}`);
+          if (outcome.status === 'budget') await say(`⚠️ ${outcome.detail}`);
+          return;
+        }
+        const topic = ideaTopic(db, idea, deps.now(), config.generation.triggerMaxAgeHours);
+        if (!topic) {
+          await say(`The news of video idea #${id} has moved on (older than ${config.generation.triggerMaxAgeHours} h): no video.`);
+          return;
+        }
+        const outcome = await generateDraft(deps, idea.network, new Date(idea.slotAt), {
+          save: true,
+          clusterCache: deps.state.clusterCache,
+          topic,
+        });
+        if (outcome.draft?.id !== undefined) {
+          db.prepare('UPDATE video_ideas SET draft_id = ? WHERE id = ?').run(outcome.draft.id, id);
+        } else if (outcome.status !== 'failed') {
+          await say(`No ${name} video from idea #${id}: ${outcome.detail}`);
+        }
+      } catch (error) {
+        deps.log(`Video idea #${id}: ${(error as Error).message}`);
+        await say(`⚠️ Video idea #${id}: ${(error as Error).message}`).catch(() => {});
+      }
+    });
+    await answer(ctx, make ? 'On it: script, voice and video.' : 'Refused. Another idea is coming.');
+    await editCard(ctx.callbackQuery.message?.message_id, ideaCard(getIdea(db, id)!));
   });
 
   // Reply buttons

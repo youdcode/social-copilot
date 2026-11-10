@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import { generateDraft, type GeneratorDeps } from '../src/generation/generator.ts';
+import { answerIdea, excludeIdeaTopic, getIdea, ideaTopic, proposeVideoIdea } from '../src/generation/ideas.ts';
 import type { MistralGateway, SearchResult } from '../src/mistral/gateway.ts';
 import type { Notifier, ProposedDraft } from '../src/notifier.ts';
 import { spentToday } from '../src/spend.ts';
@@ -360,5 +361,57 @@ describe('one web check per news', () => {
     assert.equal(d.db.prepare('SELECT count(*) FROM topic_research').pluck().get(), 1);
     purgeExpiredXText(d.db, d.config, new Date(now.getTime() + 25 * 3_600_000));
     assert.equal(d.db.prepare('SELECT count(*) FROM topic_research').pluck().get(), 0);
+  });
+});
+
+describe('video ideas', () => {
+  const pitch = (worth = true) => JSON.stringify({ worth_a_video: worth, hook: 'Model 5 just halved the price of every call.', angle: 'What half the price changes for agents running all day.' });
+  function ideaGateway(answer: string) {
+    const base = fakeGateway([goodDraft]);
+    const searches = { count: 0 };
+    const gateway: MistralGateway = {
+      ...base,
+      completeJson: async (o) => (o.jsonSchema.name === 'video_idea' ? { text: answer, usage } : base.completeJson(o)),
+      searchAndAnswer: async (o) => {
+        searches.count++;
+        return base.searchAndAnswer(o);
+      },
+    };
+    return { gateway, searches };
+  }
+
+  test('a video slot pitches an idea, cheaply: no web search, no script, nothing made', async () => {
+    const { gateway, searches } = ideaGateway(pitch());
+    const pitched: unknown[] = [];
+    const { d } = deps(gateway);
+    d.notifier = { ...d.notifier, ideaProposed: (idea) => void pitched.push(idea) };
+    const outcome = await proposeVideoIdea(d, 'tiktok', slot);
+    assert.equal(outcome.status, 'drafted');
+    assert.equal(searches.count, 0);
+    assert.equal(d.db.prepare('SELECT count(*) FROM drafts').pluck().get(), 0);
+    const idea = getIdea(d.db, outcome.idea!.id)!;
+    assert.equal(idea.hook, 'Model 5 just halved the price of every call.');
+    assert.deepEqual(idea.topic, { label: 'Lab releases Model 5', pillar: 'ai', itemRefs: ['x:9001'] });
+    assert.equal(pitched.length, 1);
+    // While it waits for an answer, the next slot pitches nothing.
+    assert.equal((await proposeVideoIdea(d, 'tiktok', slot)).status, 'pending_draft');
+  });
+
+  test('a news not worth a video is not pitched', async () => {
+    const { d } = deps(ideaGateway(pitch(false)).gateway);
+    assert.equal((await proposeVideoIdea(d, 'tiktok', slot)).status, 'no_topic');
+    assert.equal(d.db.prepare('SELECT count(*) FROM video_ideas').pluck().get(), 0);
+  });
+
+  test('an accepted idea finds its topic again, once; a refused one excludes it', async () => {
+    const { d } = deps(ideaGateway(pitch()).gateway);
+    const { idea } = await proposeVideoIdea(d, 'tiktok', slot);
+    assert.equal(answerIdea(d.db, idea!.id, 'accepted', now), true);
+    assert.equal(answerIdea(d.db, idea!.id, 'refused', now), false);
+    const topic = ideaTopic(d.db, getIdea(d.db, idea!.id)!, now, 24);
+    assert.equal(topic?.label, 'Lab releases Model 5');
+    assert.equal(topic?.trigger.ref, 'x:9001');
+    excludeIdeaTopic(d.db, getIdea(d.db, idea!.id)!, 7, now);
+    assert.equal(ideaTopic(d.db, getIdea(d.db, idea!.id)!, now, 24), undefined);
   });
 });

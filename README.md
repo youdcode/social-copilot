@@ -42,7 +42,9 @@ Sources are the same for every network. The same news can go out on several netw
 Made on your computer, free, and sent as a reply to the draft card:
 
 - **Carousels** (Instagram always, other networks when Mistral asks for an image): Mistral's small model cuts the post into 3 to 6 slides (hook, one idea per slide, takeaway), checked like any text, then drawn as 1080 × 1350 PNGs. They arrive as files, so Telegram does not recompress them.
-- **Videos** (TikTok and YouTube Shorts), 30 seconds at most, made only when the news is worth one (Mistral can answer "not today"):
+- **Videos** (TikTok and YouTube Shorts), 30 seconds at most, made **only when you say so**:
+  - at a video slot, the bot first pitches an idea: the hook and the angle, for about a tenth of a cent (small model, no web search). **🎬 Make the video** writes the script and makes the video, about €0.10; **❌ No** pitches another one. `media.askBeforeVideo: false` makes them on their own instead;
+  - Mistral can also answer "not worth a video today";
   - an **English voiceover** by [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (Apache 2.0), run on your computer, `af_heart` by default. The first video downloads the model, about 300 MB;
   - the voice sets the pace: one beat per spoken line, a hard cut, a short whoosh, the key word or number punching in;
   - captions 2 or 3 words at a time, the word being said lit up, shown a moment ahead for muted viewers;
@@ -176,7 +178,8 @@ Send `/start` to the bot.
   - **No**: optional reason, then a new topic for that network right away. A click Telegram sends twice does not start a second draft.
 - **Who to reply to** (X): among recent posts of the watched accounts, Mistral picks those worth a reply and writes 3 replies. Each one has a button that opens X's reply window on the post, the reply already in. A reply works best on a post less than an hour old.
 - **Replies received** (X): replies and mentions the account received, with the post they answer, advice and 3 replies. The bot tells you when new ones arrive.
-- **Visuals**: carousels and videos arrive under their card on their own (see [Visuals](#visuals)).
+- **Video ideas** (TikTok, YouTube): a hook and an angle, with **🎬 Make the video** and **❌ No**. Nothing costly is made before you accept.
+- **Visuals**: carousels arrive under their card on their own; videos once you accepted the idea (see [Visuals](#visuals)).
 - **Asset requests**: type, brief and duration, with an "Asset ready" button. Making the visual marks it ready.
 - **Free messages** go to Mistral, with the account voice and the pending draft of the network you opened last; `/reset` forgets the conversation.
   - A link to an X post (`x.com/…/status/…`) gets the advice and 3 replies. The post is read on X ($0.005), and the words around the link are taken as an instruction.

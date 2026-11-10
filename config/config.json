@@ -164,6 +164,7 @@
     "ffmpeg": "ffmpeg",
     "fps": 30,
     "engine": "hyperframes",
+    "askBeforeVideo": true,
     "keepDays": 7,
     "theme": {
       "background": "#0b0d12",

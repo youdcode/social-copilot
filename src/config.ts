@@ -110,6 +110,8 @@ const configSchema = z.strictObject({
     fps: z.number().int().min(12).max(60),
     /** hyperframes: GSAP compositions rendered in Chrome (motion blur, richer motion); basic: drawn frames, no browser. */
     engine: z.enum(['hyperframes', 'basic']),
+    /** Video networks pitch an idea first; the script and the video are made only once accepted in the bot. */
+    askBeforeVideo: z.boolean(),
     keepDays: z.number().positive(),
     theme: z.strictObject({ background: color, text: color, muted: color, accent: color }),
     /** The English voiceover of videos: a Kokoro voice, run on this computer. */

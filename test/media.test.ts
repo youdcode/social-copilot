@@ -266,5 +266,7 @@ describe('HyperFrames composition', () => {
     assert.match(page, /id="b1-w0-c0">\$<\/span>/);
     assert.match(page, /tl\.fromTo\('#b0-w0', \{ color: '#9aa4b2' \}/);
     assert.doesNotMatch(page, /#b0-w0', \{ opacity: 0/);
+    // Words punch only when said: before that, frame 0 shows them at their size, readable.
+    assert.ok([...page.matchAll(/tl\.fromTo\('#b0-w\d+', \{ scale[^\n]*/g)].every((m) => m[0].includes('immediateRender: false')));
   });
 });

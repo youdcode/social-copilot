@@ -226,32 +226,47 @@ async function topicsFor(deps: GeneratorDeps, candidates: readonly Candidate[], 
  * in the network's format, with up to maxAttempts tries. With save=false (dry run) nothing is stored except spend
  * and X data.
  */
+/**
+ * The topics a network could write about now, best first: fresh items not used on that network, grouped (or the
+ * grouping reused), ranked, and those excluded on that network left out. An empty list comes with the reason.
+ */
+export async function rankedTopicsFor(
+  deps: GeneratorDeps,
+  network: Network,
+  now: Date,
+  cache?: ClusterCache,
+): Promise<{ ranked: RankedTopic[]; excluded: string[]; reason: string }> {
+  const { db, config } = deps;
+  const all = gatherCandidates(db, now, config.generation.triggerMaxAgeHours);
+  const available = gatherCandidates(db, now, config.generation.triggerMaxAgeHours, network);
+  const excluded = activeExcludedTopics(db, now, network);
+  if (available.length === 0) return { ranked: [], excluded, reason: 'No item from the last 24 hours.' };
+  const topics = await topicsFor(deps, all, now, cache);
+  const ranked = rankTopics(topics, available, now).filter((t) => !excluded.some((e) => similarTopics(e, t.label)));
+  return { ranked, excluded, reason: `No topic within the pillars among ${available.length} items.` };
+}
+
 export async function generateDraft(
   deps: GeneratorDeps,
   network: Network,
   slotAt: Date,
-  options: { save: boolean; clusterCache?: ClusterCache },
+  options: { save: boolean; clusterCache?: ClusterCache; topic?: RankedTopic },
 ): Promise<SlotOutcome> {
   const { db, config } = deps;
   const attempts: AttemptReport[] = [];
   const name = NETWORK_SPECS[network].name;
   try {
-    if (options.save && pendingDraftExists(db, network)) {
+    // A topic given (a video idea accepted) is written now, whatever else is pending.
+    if (options.save && !options.topic && pendingDraftExists(db, network)) {
       return { status: 'pending_draft', detail: `A ${name} draft is still waiting for a decision.`, attempts };
     }
     const now = deps.now();
     assertBudget(db, config, 'mistral', now);
-    const all = gatherCandidates(db, now, config.generation.triggerMaxAgeHours);
-    const available = gatherCandidates(db, now, config.generation.triggerMaxAgeHours, network);
-    if (available.length === 0) return { status: 'no_topic', detail: 'No item from the last 24 hours.', attempts };
-
-    const excluded = activeExcludedTopics(db, now, network);
-    const topics = await topicsFor(deps, all, now, options.clusterCache);
-    const ranked = rankTopics(topics, available, now).filter((t) => !excluded.some((e) => similarTopics(e, t.label)));
+    const { ranked, excluded, reason } = options.topic
+      ? { ranked: [options.topic], excluded: activeExcludedTopics(db, now, network), reason: '' }
+      : await rankedTopicsFor(deps, network, now, options.clusterCache);
     let topic = ranked.shift();
-    if (!topic) {
-      return { status: 'no_topic', detail: `No topic within the pillars among ${available.length} items.`, attempts };
-    }
+    if (!topic) return { status: 'no_topic', detail: reason, attempts };
     deps.log(`${name}: topic "${topic.label}" (${topic.items.length} items, score ${topic.score.toFixed(2)})`);
 
     let feedback: string[] = [];

@@ -201,6 +201,35 @@ describe('draft buttons', () => {
   });
 });
 
+describe('video ideas', () => {
+  function insertIdea(t: ReturnType<typeof setup>): number {
+    return Number(
+      t.deps.db
+        .prepare("INSERT INTO video_ideas (network, slot_at, topic, hook, angle, sources) VALUES ('tiktok', '2026-10-01T07:00:00Z', ?, 'Half the price.', 'Why it matters.', '[]')")
+        .run(JSON.stringify({ label: 'Model 5', pillar: 'ai', itemRefs: ['x:1'] })).lastInsertRowid,
+    );
+  }
+
+  test('Make the video is taken once; when the news has moved on, it says so', async () => {
+    const t = setup();
+    const id = insertIdea(t);
+    await t.click(`i:${id}:make`);
+    await t.click(`i:${id}:make`);
+    const answers = t.calls.filter((c) => c.method === 'answerCallbackQuery').map((c) => c.payload.text);
+    assert.deepEqual(answers, ['On it: script, voice and video.', 'Already handled.']);
+    assert.match(t.sent().at(-1)!.text, /has moved on/);
+    assert.match(t.calls.find((c) => c.method === 'editMessageText')!.payload.text, /Accepted/);
+  });
+
+  test('No excludes the topic and pitches another idea', async () => {
+    const t = setup();
+    const id = insertIdea(t);
+    await t.click(`i:${id}:no`);
+    assert.equal(t.deps.db.prepare("SELECT count(*) FROM excluded_topics WHERE network = 'tiktok' AND topic = 'Model 5'").pluck().get(), 1);
+    assert.match(t.sent().at(-1)!.text, /No other TikTok video idea/);
+  });
+});
+
 describe('edit instructions', () => {
   test('two quick instructions: the second rewrites the result of the first, and edits its card', async () => {
     const { gateway, jsonCalls } = scriptedGateway({

@@ -2,6 +2,7 @@ import { InlineKeyboard } from 'grammy';
 import { enabledNetworks, type AppConfig } from '../config.ts';
 import type { Draft } from '../drafts.ts';
 import type { VideoScript } from '../generation/draft.ts';
+import type { VideoIdea } from '../generation/ideas.ts';
 import { composeLink, NETWORK_SPECS, NETWORKS, xReplyLink, type Network } from '../networks.ts';
 import { replyAgeMinutes, type Reply } from '../replies.ts';
 import type { DailyStats } from '../stats.ts';
@@ -141,6 +142,26 @@ export function draftCard(draft: Draft, copyMax: number): Card {
     .text('✏️ Edit', `d:${draft.id}:edit`)
     .text({ text: '❌ No', style: 'danger' }, `d:${draft.id}:no`);
   return { ...card, keyboard };
+}
+
+/** A video pitch: the hook and the angle, with Make the video and No while it waits for an answer. */
+export function ideaCard(idea: VideoIdea): Card {
+  const spec = NETWORK_SPECS[idea.network];
+  const status =
+    idea.status === 'accepted' ? '\n🎬 Accepted: the script and the video are on their way.' : idea.status === 'refused' ? '\n❌ Refused' : '';
+  const lines = [
+    `<b>${spec.name} · video idea #${idea.id}</b> · ${PILLAR_NAMES[idea.topic.pillar]}${status}`,
+    '',
+    `<b>Hook:</b> “${escapeHtml(idea.hook)}”`,
+    `<b>Angle:</b> ${escapeHtml(idea.angle)}`,
+    '',
+    `<i>${escapeHtml(idea.topic.label)}${idea.sources.length > 0 ? ` · ${idea.sources.map((s) => link(s, shortUrl(s).split('/')[0]!)).join(' · ')}` : ''}</i>`,
+  ];
+  if (idea.status !== 'proposed') return { text: lines.join('\n') };
+  const keyboard = new InlineKeyboard()
+    .text({ text: '🎬 Make the video (~€0.10)', style: 'success' }, `i:${idea.id}:make`)
+    .text({ text: '❌ No', style: 'danger' }, `i:${idea.id}:no`);
+  return { text: lines.join('\n'), keyboard };
 }
 
 /** A card of "Asset requests": type, brief, duration, and the Asset ready button. */

@@ -1,4 +1,5 @@
 import type { DraftJson } from './generation/draft.ts';
+import type { VideoIdea } from './generation/ideas.ts';
 import { NETWORK_SPECS, type Network } from './networks.ts';
 
 export type ProposedDraft = DraftJson & { id?: number; network: Network; length: number; triggerUrl: string };
@@ -9,6 +10,8 @@ export type Notifier = {
   alert(message: string): Promise<void> | void;
   /** Information that needs no action, such as new mentions. */
   notice(message: string): Promise<void> | void;
+  /** A video pitched before anything costly is made. */
+  ideaProposed?(idea: VideoIdea): Promise<void> | void;
 };
 
 export function formatDraftCard(draft: ProposedDraft): string {
@@ -49,5 +52,8 @@ export const consoleNotifier: Notifier = {
   },
   notice(message) {
     console.log(message);
+  },
+  ideaProposed(idea) {
+    console.log(`\n${NETWORK_SPECS[idea.network].name} video idea #${idea.id}: ${idea.topic.label}\nHook: ${idea.hook}\nAngle: ${idea.angle}\n`);
   },
 };

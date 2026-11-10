@@ -18,7 +18,15 @@ const n = (value: number) => Number(value.toFixed(3));
 /** Entrances of key words, rotated so no two beats in a row land the same way. */
 const ENTRANCES = ['blurWords', 'zoomFromLarge', 'clipWipe', 'whipIn'] as const;
 /** Seams between beats: 3 kinds, rotated. */
-const SEAMS = ['flash', 'whip', 'dip'] as const;
+const SEAMS = ['flash', 'whip', 'zoom', 'dip'] as const;
+
+/** A short, decaying camera shake: fixed offsets, so every render is the same. */
+function shake(target: string, at: number, strength: number): string[] {
+  const steps = [[1, -0.6], [-0.8, 0.9], [0.6, -0.4], [-0.3, 0.3], [0, 0]];
+  return steps.map(
+    ([x, y], i) => `tl.to('${target}', { x: ${n(x! * strength)}, y: ${n(y! * strength)}, duration: 0.05, ease: 'none' }, ${n(at + i * 0.05)});`,
+  );
+}
 
 /** A sound of the mix. Voice and cut sounds go on separate tracks, so they never stack on one. */
 export type AudioClip = { id: string; src: string; start: number; duration: number; volume: number; track: number };
@@ -61,8 +69,8 @@ export function composeShort(timeline: Timeline, audio: readonly AudioClip[], th
     const note = beat.note ? `<div class="note" id="b${b}-note">${html(beat.note)}</div>` : '';
     clips.push(
       `<div id="b${b}" class="clip beat" data-start="${start}" data-duration="${length}" data-track-index="1">` +
-        `<div class="stage" id="b${b}-stage"><div class="hero${beat.kind === 'hook' ? ' hook' : ''}" id="b${b}-hero" style="top:${top}px;font-size:${size}px">${spans}</div>` +
-        (beat.kind === 'shot' ? `<div class="bar" id="b${b}-bar" style="top:${top - 46}px"></div>` : '') +
+        `<div class="stage" id="b${b}-stage"><div class="hero${beat.kind === 'hook' ? ' hook' : ''}" id="b${b}-hero" style="top:${top}px;font-size:${size}px"${beat.kind === 'hook' ? ' data-layout-allow-overlap' : ''}>${spans}</div>` +
+        (beat.kind === 'shot' ? `<div class="bar" id="b${b}-bar" style="top:${top - 46}px"></div><div class="ring" id="b${b}-ring" data-layout-ignore></div>` : '') +
         `${note}</div></div>`,
     );
 
@@ -72,15 +80,21 @@ export function composeShort(timeline: Timeline, audio: readonly AudioClip[], th
     if (beat.kind === 'hook') {
       // Frame 0 is the thumbnail: the whole hook is already readable; each word turns from grey to ink as it is said.
       beat.words.forEach((word, i) => {
-        script.push(`tl.fromTo('#b${b}-w${i}', { color: '${theme.muted}' }, { color: '${theme.text}', duration: 0.1, ease: 'none' }, ${n(Math.max(0, word.start - 0.06))});`);
+        const hit = n(Math.max(0, word.start - 0.06));
+        script.push(`tl.fromTo('#b${b}-w${i}', { color: '${theme.muted}' }, { color: '${theme.text}', duration: 0.08, ease: 'none' }, ${hit});`);
+        if (i > 0) script.push(`tl.fromTo('#b${b}-w${i}', { scale: 1.22, transformOrigin: '50% 100%' }, { scale: 1, duration: 0.24, ease: 'back.out(2.2)', immediateRender: false }, ${hit});`);
+        if (i % 2 === 1) script.push(`tl.fromTo('#pulse', { opacity: 0.22 }, { opacity: 0, duration: 0.2, ease: 'power2.out', immediateRender: false }, ${hit});`);
       });
-      script.push(`tl.fromTo('#b${b}-hero', { y: 0 }, { y: -24, duration: ${n(Math.max(0.5, length - 0.2))}, ease: 'power2.inOut' }, 0);`);
+      script.push(...shake(`#b${b}-stage`, n(Math.max(0, (beat.words.at(-1)?.start ?? 0.5) - 0.04)), 10));
     } else if (isNumber) {
       words.forEach((w, i) => {
         [...w].forEach((_, j) => {
-          script.push(`tl.fromTo('#b${b}-w${i}-c${j}', { yPercent: 110, opacity: 0, filter: 'blur(10px)' }, { yPercent: 0, opacity: 1, filter: 'blur(0px)', duration: 0.42, ease: 'expo.out' }, ${at(0.04 + (i * 4 + j) * 0.045)});`);
+          script.push(`tl.fromTo('#b${b}-w${i}-c${j}', { yPercent: 110, opacity: 0, filter: 'blur(10px)' }, { yPercent: 0, opacity: 1, filter: 'blur(0px)', duration: 0.36, ease: 'expo.out' }, ${at(0.03 + (i * 4 + j) * 0.04)});`);
         });
       });
+      const landed = at(0.03 + Math.min(8, beat.big.length) * 0.04 + 0.12);
+      script.push(...shake(`#b${b}-stage`, landed, 16));
+      script.push(`tl.fromTo('#flood', { opacity: 0.32 }, { opacity: 0, duration: 0.45, ease: 'power2.out', immediateRender: false }, ${landed});`);
     } else {
       const kind = ENTRANCES[b % ENTRANCES.length];
       if (kind === 'blurWords') {
@@ -99,6 +113,12 @@ export function composeShort(timeline: Timeline, audio: readonly AudioClip[], th
     }
     if (beat.kind === 'shot') {
       script.push(`tl.fromTo('#b${b}-bar', { scaleX: 0 }, { scaleX: 1, duration: 0.45, ease: 'expo.out' }, ${at(0.12)});`);
+      script.push(`tl.fromTo('#b${b}-ring', { scale: 0.5, opacity: 0, rotation: 0 }, { scale: 1, opacity: 1, duration: 0.5, ease: 'expo.out' }, ${at(0.05)});`);
+      script.push(`tl.to('#b${b}-ring', { rotation: ${Math.round(length * 40)}, duration: ${n(length)}, ease: 'none' }, ${at(0)});`);
+      // A hard punch-in halfway: the shot gets a second beat without a cut.
+      if (length > 1.6) {
+        script.push(`tl.fromTo('#b${b}-hero', { scale: 1 }, { scale: 1.12, duration: 0.09, ease: 'power4.out', immediateRender: false }, ${at(length * 0.5)});`);
+      }
     }
     if (beat.note) {
       script.push(`tl.fromTo('#b${b}-note', { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.4, ease: 'expo.out' }, ${at(0.25)});`);
@@ -110,6 +130,8 @@ export function composeShort(timeline: Timeline, audio: readonly AudioClip[], th
       const exitAt = at(length - 0.16);
       if (seam === 'whip') {
         script.push(`tl.to('#b${b}-stage', { x: -380, filter: 'blur(18px)', opacity: 0, duration: 0.16, ease: 'power3.in' }, ${exitAt});`);
+      } else if (seam === 'zoom') {
+        script.push(`tl.to('#b${b}-stage', { scale: 2.6, filter: 'blur(20px)', opacity: 0, duration: 0.18, ease: 'power3.in' }, ${n(exitAt - 0.02)});`);
       } else {
         script.push(`tl.to('#b${b}-stage', { opacity: 0, scale: 0.94, filter: 'blur(8px)', duration: 0.16, ease: 'power3.in' }, ${exitAt});`);
       }
@@ -136,6 +158,7 @@ export function composeShort(timeline: Timeline, audio: readonly AudioClip[], th
       script.push(`tl.fromTo('#${id}-in', { scale: 0.82, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.14, ease: 'back.out(1.8)' }, ${n(from)});`);
       group.forEach((word, i) => {
         script.push(`tl.fromTo('#${id}-w${i}', { backgroundColor: 'rgba(0,0,0,0)' }, { backgroundColor: '${theme.accent}', duration: 0.06, ease: 'none' }, ${n(Math.max(from, word.start - 0.05))});`);
+        script.push(`tl.fromTo('#${id}-w${i}', { scale: 1.3 }, { scale: 1, duration: 0.2, ease: 'back.out(2.4)', immediateRender: false }, ${n(Math.max(from, word.start - 0.05))});`);
         script.push(`tl.to('#${id}-w${i}', { backgroundColor: 'rgba(0,0,0,0)', duration: 0.06, ease: 'none' }, ${n(Math.max(from + 0.07, word.end - 0.03))});`);
       });
     });
@@ -143,8 +166,8 @@ export function composeShort(timeline: Timeline, audio: readonly AudioClip[], th
 
   // The world behind keeps moving: a grid floor travelling at constant speed, two glows drifting both ways.
   script.unshift(
-    `tl.set(['#flash', '#dip'], { opacity: 0 }, 0);`,
-    `tl.fromTo('#grid', { backgroundPosition: '0px 0px' }, { backgroundPosition: '0px ${Math.round(duration * 160)}px', duration: ${duration}, ease: 'none' }, 0);`,
+    `tl.set(['#flash', '#dip', '#pulse', '#flood'], { opacity: 0 }, 0);`,
+    `tl.fromTo('#grid', { backgroundPosition: '0px 0px' }, { backgroundPosition: '0px ${Math.round(duration * 320)}px', duration: ${duration}, ease: 'none' }, 0);`,
     `tl.fromTo('#glow-a', { x: -160, y: -60 }, { x: 180, y: 120, duration: ${duration}, ease: 'power2.inOut' }, 0);`,
     `tl.fromTo('#glow-b', { x: 140, y: 80 }, { x: -200, y: -140, duration: ${duration}, ease: 'power2.inOut' }, 0);`,
   );
@@ -180,7 +203,11 @@ export function composeShort(timeline: Timeline, audio: readonly AudioClip[], th
       .cap { position: absolute; left: 0; width: ${VIDEO_WIDTH}px; top: 1150px; }
       .cap-in { display: block; width: 100%; text-align: center; font-weight: 900; font-size: 74px; text-transform: uppercase; letter-spacing: -0.01em; line-height: 1.25; }
       .cw { display: inline-block; padding: 2px 16px 6px; border-radius: 14px; }
-      #flash, #dip { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+      .ring { position: absolute; left: 340px; top: 360px; width: 900px; height: 900px; border-radius: 50%; border: 6px dashed ${theme.accent}55; z-index: 0; }
+      .hero, .bar, .note { z-index: 1; }
+      #flash, #dip, #pulse, #flood { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+      #pulse { background: ${theme.accent}; mix-blend-mode: screen; }
+      #flood { background: radial-gradient(circle at 50% 35%, ${theme.accent} 0%, ${theme.accent}00 70%); }
       #flash { background: ${theme.text}; }
       #dip { background: #000; }
     </style>
@@ -192,6 +219,8 @@ export function composeShort(timeline: Timeline, audio: readonly AudioClip[], th
       <div id="glow-b" class="glow"></div>
       <div id="grid-wrap" data-layout-ignore><div id="grid"></div></div>
       ${clips.join('\n      ')}
+      <div id="pulse" data-layout-ignore></div>
+      <div id="flood" data-layout-ignore></div>
       <div id="flash" data-layout-ignore></div>
       <div id="dip" data-layout-ignore></div>
       ${sounds.join('\n      ')}

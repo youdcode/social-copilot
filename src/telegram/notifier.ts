@@ -3,7 +3,8 @@ import type { AppConfig } from '../config.ts';
 import type { Db } from '../db/database.ts';
 import { getDraft, setDraftMessage } from '../drafts.ts';
 import type { Notifier } from '../notifier.ts';
-import { draftCard, type Card } from './format.ts';
+import { setIdeaMessage } from '../generation/ideas.ts';
+import { draftCard, ideaCard, type Card } from './format.ts';
 import type { MediaDelivery } from './media.ts';
 
 /**
@@ -75,6 +76,12 @@ export function createTelegramNotifier(
     },
     async notice(message) {
       await safely('notice', () => api.sendMessage(chatId, message));
+    },
+    async ideaProposed(idea) {
+      await safely(`video idea #${idea.id}`, async () => {
+        const message = await sendCard(api, chatId, ideaCard(idea));
+        setIdeaMessage(db, idea.id, message.message_id);
+      });
     },
   };
 }

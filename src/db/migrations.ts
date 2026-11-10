@@ -232,5 +232,23 @@ export const MIGRATIONS: readonly string[] = [
     refs TEXT NOT NULL CHECK (json_valid(refs)),
     created_at TEXT NOT NULL
   );
+  `,  `
+  -- Video ideas: a video is only written and made once the operator says so, since it costs more than a post.
+  -- topic holds what is needed to find the topic again: label, pillar and the refs of its items.
+  CREATE TABLE video_ideas (
+    id INTEGER PRIMARY KEY,
+    network TEXT NOT NULL,
+    slot_at TEXT NOT NULL,
+    topic TEXT NOT NULL CHECK (json_valid(topic)),
+    hook TEXT NOT NULL,
+    angle TEXT NOT NULL,
+    sources TEXT NOT NULL CHECK (json_valid(sources) AND json_type(sources) = 'array'),
+    status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed', 'accepted', 'refused')),
+    draft_id INTEGER REFERENCES drafts (id) ON DELETE SET NULL,
+    telegram_message_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT ${now},
+    updated_at TEXT NOT NULL DEFAULT ${now}
+  );
+  CREATE INDEX video_ideas_network_status ON video_ideas (network, status);
   `,
 ];
