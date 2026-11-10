@@ -58,7 +58,7 @@ describe('rewriteDraft', () => {
   });
 
   test('rewrites a YouTube draft whole: title, description and script, checked as YouTube', async () => {
-    const script = { hook: 'Cheaper?', shots: [{ visual: 'Pricing page', voiceover: 'Model 5 is out.', on_screen_text: '-50%' }, { visual: 'Chart', voiceover: 'Same quality, half the price.', on_screen_text: 'Same quality' }, { visual: 'Terminal', voiceover: 'Check the benchmarks first.', on_screen_text: 'Benchmarks?' }], duration_s: 20 };
+    const script = { hook: 'Cheaper?', shots: [{ visual: 'Pricing page', voiceover: 'Model 5 is out.', on_screen_text: '-50%', scene: null }, { visual: 'Chart', voiceover: 'Same quality, half the price.', on_screen_text: 'Same quality', scene: null }, { visual: 'Terminal', voiceover: 'Check the benchmarks first.', on_screen_text: 'Benchmarks?', scene: null }], duration_s: 20 };
     const answer = JSON.stringify({ title: 'Model 5, half price', text: 'Sources below.', script });
     const { gateway, jsonCalls } = scriptedGateway({ json: { rewrite_youtube: [answer] } });
     const d = deps(gateway);

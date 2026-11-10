@@ -59,7 +59,7 @@ describe('draftCard', () => {
 describe('draftCard on other networks', () => {
   test('a YouTube card shows the title with its own copy button, and the script shot by shot', () => {
     const db = testDb();
-    const script = { hook: 'Half the price?', shots: [{ visual: 'Pricing page', voiceover: 'Model 5 is out.', on_screen_text: '-50%' }], duration_s: 30 };
+    const script = { hook: 'Half the price?', shots: [{ visual: 'Pricing page', voiceover: 'Model 5 is out.', on_screen_text: '-50%', scene: null }], duration_s: 30 };
     const id = insertDraft(db, { network: 'youtube', title: 'Model 5 <at> half price', script: JSON.stringify(script) });
     const card = draftCard(getDraft(db, id)!, 256);
     assert.match(card.text, /^<b>YouTube Shorts · draft #1<\/b>/);
@@ -73,7 +73,7 @@ describe('draftCard on other networks', () => {
 
   test('a long video card sends the script ahead too, and always fits one message', () => {
     const db = testDb();
-    const shot = { visual: 'v'.repeat(150), voiceover: 'w'.repeat(150), on_screen_text: 't'.repeat(30) };
+    const shot = { visual: 'v'.repeat(150), voiceover: 'w'.repeat(150), on_screen_text: 't'.repeat(30), scene: null };
     const script = { hook: 'Hook', shots: Array.from({ length: 12 }, () => shot), duration_s: 90 };
     const sources = JSON.stringify(Array.from({ length: 6 }, (_, i) => `https://example.com/${'p'.repeat(200)}/${i}`));
     const id = insertDraft(db, { network: 'youtube', title: 'T'.repeat(90), text: 'd '.repeat(475), script: JSON.stringify(script), sources });

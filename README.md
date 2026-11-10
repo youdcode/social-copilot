@@ -46,10 +46,11 @@ Made on your computer, free, and sent as a reply to the draft card:
   - at a video slot, the bot first pitches an idea: the hook and the angle, for about a tenth of a cent (small model, no web search). **🎬 Make the video** writes the script and makes the video, about €0.10; **❌ No** pitches another one. `media.askBeforeVideo: false` makes them on their own instead;
   - Mistral can also answer "not worth a video today";
   - an **English voiceover** by [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M) (Apache 2.0), run on your computer, `af_heart` by default. The first video downloads the model, about 300 MB;
-  - the voice sets the pace: one beat per spoken line, a hard cut, a short whoosh, the key word or number punching in;
-  - captions 2 or 3 words at a time, the word being said lit up, shown a moment ahead for muted viewers;
+  - the voice is the type: what is said rises on screen 2 or 3 words at a time, large, the key word or number in the accent colour; lines follow each other with no gap (the silence Kokoro leaves around a line is trimmed);
+  - each shot shows an animated example chosen by Mistral: a headline card with its outlet, a counter running to the number, bars comparing before and after, a terminal typing a command, a chat answering, a list building up, a quote;
+  - two colour fields, dark and accent, swap from shot to shot with a wipe; a film grain moves over everything; no flashes;
   - frame 0 shows the hook, so it works as the thumbnail; everything stays out of the areas the apps cover;
-  - sound levelled to -14 LUFS; add your own music with `media.music` (mind its license);
+  - **music**: put royalty-free tracks in `data/music` (or point `media.music` to a file or a folder); videos take them in turn. The track is started so that its drop lands on the first cut after the hook, lowered under the voice (sidechain ducking), and the whole sound levelled to -14 LUFS. Check that each track's license allows social media use (the [Mixkit](https://mixkit.co/license/#musicFree) free license does, for example). Without music, the voice is levelled alone;
   - rendered by [HyperFrames](https://github.com/heygen-com/hyperframes) (Apache 2.0): each video is an HTML page animated with [GSAP](https://gsap.com) (free "Standard no charge" license), rendered frame by frame in a headless Chrome with motion blur. A 16 s video renders in about 13 s. The service turns HyperFrames' usage telemetry off;
   - each video's project folder is kept next to it (`data/media/<id>/project`): open it in HyperFrames Studio to tweak one by hand;
   - `media.engine: "basic"` draws videos without a browser instead (plainer, no Chrome needed); it also takes over if HyperFrames fails.

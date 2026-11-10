@@ -4,7 +4,8 @@ import type { AssistantDeps } from '../assistant.ts';
 import type { Draft } from '../drafts.ts';
 import { NETWORK_SPECS } from '../networks.ts';
 import { designCarousel, renderCarousel } from './carousel.ts';
-import { composeShort, gsapPath, renderProject, type AudioClip } from './hyperframes.ts';
+import { composeShort, grainPng, gsapPath, renderProject, type AudioClip } from './hyperframes.ts';
+import { mixWithMusic, pickTrack } from './music.ts';
 import { buildTimeline, estimateSeconds, makeWhoosh, mixAudio, normalizeLoudness, renderVideo, spokenLines, type Timeline } from './video.ts';
 import { speakLines, type VoiceLine } from './voice.ts';
 
@@ -52,17 +53,18 @@ export async function produceMedia(deps: AssistantDeps, draft: Draft, outDir: st
     let engine = media.engine;
     if (engine === 'hyperframes') {
       try {
-        await hyperframesVideo(timeline, voices, project, file, media);
+        await hyperframesVideo(timeline, voices, project, file, media, draft.id);
       } catch (error) {
         deps.log(`HyperFrames failed, drawing the video with the basic engine: ${(error as Error).message}`);
         engine = 'basic';
       }
     }
     if (engine === 'basic') {
-      const silent = voices.length > 0 || media.music ? path.join(outDir, 'picture.mp4') : file;
+      const track = pickTrack(media.music, draft.id);
+      const silent = voices.length > 0 || track ? path.join(outDir, 'picture.mp4') : file;
       await renderVideo(timeline, silent, media);
       if (silent !== file) {
-        await mixAudio(timeline, voices.map((v) => v.file), silent, file, { ffmpeg: media.ffmpeg, ...(media.music ? { music: media.music } : {}) });
+        await mixAudio(timeline, voices.map((v) => v.file), silent, file, { ffmpeg: media.ffmpeg, ...(track ? { music: track } : {}) });
         rmSync(silent, { force: true });
       }
     }
@@ -91,24 +93,24 @@ async function hyperframesVideo(
   project: string,
   file: string,
   media: AssistantDeps['config']['media'],
+  seed: number,
 ): Promise<void> {
   const assets = path.join(project, 'assets');
   copyFileSync(gsapPath(), path.join(assets, 'gsap.min.js'));
+  writeFileSync(path.join(assets, 'grain.png'), grainPng());
   await makeWhoosh(media.ffmpeg, path.join(assets, 'whoosh.wav'));
   const spoken = timeline.beats.filter((b) => b.kind !== 'outro');
   const audio: AudioClip[] = [
     ...voices.map((v, i) => ({ id: `voice-${i}`, src: `assets/${path.basename(v.file)}`, start: spoken[i]!.start, duration: v.seconds, volume: 1, track: 3 })),
-    ...timeline.beats.slice(1).map((b, i) => ({ id: `whoosh-${i}`, src: 'assets/whoosh.wav', start: Math.max(0, b.start - 0.08), duration: 0.32, volume: 0.35, track: 4 })),
+    ...timeline.beats.slice(1).map((b, i) => ({ id: `whoosh-${i}`, src: 'assets/whoosh.wav', start: Math.max(0, b.start - 0.12), duration: 0.32, volume: 0.2, track: 4 })),
   ];
-  if (media.music) {
-    const music = `music${path.extname(media.music)}`;
-    copyFileSync(media.music, path.join(assets, music));
-    audio.push({ id: 'music', src: `assets/${music}`, start: 0, duration: timeline.seconds, volume: 0.15, track: 5 });
-  }
   writeFileSync(path.join(project, 'index.html'), composeShort(timeline, audio, media.theme));
   const raw = path.join(path.dirname(file), 'raw.mp4');
   await renderProject(project, raw);
-  await normalizeLoudness(media.ffmpeg, raw, file);
+  // Music goes in after the render, ducked under the voice, its drop on the first cut after the hook.
+  const track = pickTrack(media.music, seed);
+  if (track) await mixWithMusic(media.ffmpeg, raw, track, { seconds: timeline.seconds, dropAt: timeline.beats[1]?.start ?? 0, output: file });
+  else await normalizeLoudness(media.ffmpeg, raw, file);
   rmSync(raw, { force: true });
 }
 

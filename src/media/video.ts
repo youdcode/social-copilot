@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import { Worker } from 'node:worker_threads';
-import type { VideoScript } from '../generation/draft.ts';
+import type { Scene, VideoScript } from '../generation/draft.ts';
 import { el, fitFontSize, host, renderPng, withoutEmoji, type Node, type Theme } from './render.ts';
 
 /** Vertical 9:16, the size of TikTok and YouTube Shorts. */
@@ -17,13 +17,21 @@ const TEXT_WIDTH = VIDEO_WIDTH - 2 * PADDING_X;
 /** A word of the voiceover and when it is said, in seconds from the start of the video. */
 export type Word = { text: string; start: number; end: number };
 
-/** One beat of the edit: a spoken line with its key word on screen, cut hard into the next. */
-export type Beat = { kind: 'hook' | 'shot' | 'outro'; start: number; end: number; big: string; words: Word[]; note: string };
+/** One beat of the edit: a spoken line, its key word, and the animated example it shows. */
+export type Beat = {
+  kind: 'hook' | 'shot' | 'outro';
+  start: number;
+  end: number;
+  big: string;
+  words: Word[];
+  note: string;
+  scene: Scene | null;
+};
 
 export type Timeline = { beats: Beat[]; seconds: number };
 
 /** Breath between two lines. */
-const GAP_SECONDS = 0.18;
+const GAP_SECONDS = 0.08;
 const OUTRO_SECONDS = 1.4;
 /** Without a voice, a line lasts as long as it takes to read it at this pace. */
 const WORDS_PER_SECOND = 2.6;
@@ -71,11 +79,12 @@ export function buildTimeline(script: VideoScript, sources: readonly string[], l
       big: i === 0 ? line : withoutEmoji(shot!.on_screen_text) || line,
       words: timeWords(line, t, seconds),
       note: '',
+      scene: shot?.scene ?? null,
     });
     t += seconds + GAP_SECONDS;
   });
   const hosts = [...new Set(sources.map(host))].slice(0, 3);
-  beats.push({ kind: 'outro', start: t, end: t + OUTRO_SECONDS, big: 'Sources', words: [], note: hosts.join(' · ') });
+  beats.push({ kind: 'outro', start: t, end: t + OUTRO_SECONDS, big: 'Sources', words: [], note: hosts.join(' · '), scene: null });
   return { beats, seconds: t + OUTRO_SECONDS };
 }
 

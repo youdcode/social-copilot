@@ -240,7 +240,7 @@ describe('several networks', () => {
     const short = {
       ...goodDraft,
       title: 'Model 5 at half the price',
-      script: { hook: 'Half the price?', shots: [{ visual: 'Pricing page', voiceover: 'Model 5 is out.', on_screen_text: '-50%' }, { visual: 'Chart', voiceover: 'Same quality, half the price.', on_screen_text: 'Same quality' }, { visual: 'Terminal', voiceover: 'Check the benchmarks first.', on_screen_text: 'Benchmarks?' }], duration_s: 25 },
+      script: { hook: 'Half the price?', shots: [{ visual: 'Pricing page', voiceover: 'Model 5 is out.', on_screen_text: '-50%', scene: null }, { visual: 'Chart', voiceover: 'Same quality, half the price.', on_screen_text: 'Same quality', scene: null }, { visual: 'Terminal', voiceover: 'Check the benchmarks first.', on_screen_text: 'Benchmarks?', scene: null }], duration_s: 25 },
       worth_a_video: true,
     };
     const base = fakeGateway([short]);

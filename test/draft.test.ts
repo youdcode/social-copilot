@@ -99,7 +99,7 @@ describe('validateDraft', () => {
 describe('validateDraft on other networks', () => {
   const script = {
     hook: 'Half the price?',
-    shots: [{ visual: 'Pricing page', voiceover: 'Model 5 is out.', on_screen_text: '-50%' }, { visual: 'Chart', voiceover: 'Same quality, half the price.', on_screen_text: 'Same quality' }, { visual: 'Terminal', voiceover: 'Check the benchmarks first.', on_screen_text: 'Benchmarks?' }],
+    shots: [{ visual: 'Pricing page', voiceover: 'Model 5 is out.', on_screen_text: '-50%', scene: null }, { visual: 'Chart', voiceover: 'Same quality, half the price.', on_screen_text: 'Same quality', scene: null }, { visual: 'Terminal', voiceover: 'Check the benchmarks first.', on_screen_text: 'Benchmarks?', scene: null }],
     duration_s: 25,
   };
 
@@ -132,7 +132,7 @@ describe('validateDraft on other networks', () => {
     const chatty = { ...script, shots: script.shots.map((s) => ({ ...s, voiceover: 'word '.repeat(30).trim() })) };
     assert.match(errors(chatty), /The voiceover has 93 words; keep it under 75/);
     assert.match(errors({ ...script, shots: script.shots.slice(0, 2) }), /2 shots; give 3 to 6/);
-    assert.match(errors({ ...script, shots: [{ ...script.shots[0]!, on_screen_text: 'Model 5 is now half the price' }, ...script.shots.slice(1)] }), /on_screen_text is 4 words at most/);
+    assert.match(errors({ ...script, shots: [{ ...script.shots[0]!, on_screen_text: 'Model 5 is now half the price', scene: null }, ...script.shots.slice(1)] }), /on_screen_text is 4 words at most/);
     assert.match(errors({ ...script, shots: [{ ...script.shots[0]!, voiceover: '' }, ...script.shots.slice(1)] }), /Every shot needs a voiceover/);
   });
 

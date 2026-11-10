@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, statSync, utimesSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test } from 'node:test';
@@ -13,7 +13,9 @@ import { mediaKind, purgeOldMedia } from '../src/media/studio.ts';
 import { buildTimeline, captionGroups, estimateSeconds, frameAt, mixAudio, renderVideo, timeWords } from '../src/media/video.ts';
 import { latestVideoTrends, studyVideoTrends } from '../src/generation/trends.ts';
 import { systemPrompt } from '../src/generation/draft.ts';
-import { composeShort } from '../src/media/hyperframes.ts';
+import { trimSilence, wavFile } from '../src/media/voice.ts';
+import { composeShort, parseFigure } from '../src/media/hyperframes.ts';
+import { dropFromLoudness, mixWithMusic, pickTrack } from '../src/media/music.ts';
 import { createSerialQueue } from '../src/queue.ts';
 import { createMediaDelivery } from '../src/telegram/media.ts';
 import { insertDraft, scriptedGateway, testConfig, testDb, testFilter } from './helpers.ts';
@@ -89,8 +91,8 @@ describe('video', () => {
     hook: 'Half the price?',
     duration_s: 12,
     shots: [
-      { visual: 'Pricing page', voiceover: 'Model 5 now costs half as much.', on_screen_text: '-50%' },
-      { visual: 'Terminal', voiceover: 'Check the benchmarks first.', on_screen_text: 'Benchmarks first' },
+      { visual: 'Pricing page', voiceover: 'Model 5 now costs half as much.', on_screen_text: '-50%', scene: null },
+      { visual: 'Terminal', voiceover: 'Check the benchmarks first.', on_screen_text: 'Benchmarks first', scene: null },
     ],
   };
 
@@ -98,14 +100,14 @@ describe('video', () => {
     const timeline = buildTimeline(script, ['https://lab.test/a', 'https://www.lab.test/b', 'https://news.test/c'], [1.5, 2, 1.2]);
     assert.deepEqual(timeline.beats.map((b) => b.kind), ['hook', 'shot', 'shot', 'outro']);
     assert.equal(timeline.beats[1]!.big, '-50%');
-    assert.equal(timeline.beats[1]!.start, 1.68);
+    assert.equal(timeline.beats[1]!.start, 1.58);
     assert.equal(timeline.beats[3]!.note, 'lab.test · news.test');
-    assert.equal(Number(timeline.seconds.toFixed(2)), 6.64);
+    assert.equal(Number(timeline.seconds.toFixed(2)), 6.34);
     // Words of a line are timed within it, in order, the last ending with the line.
     const words = timeline.beats[1]!.words;
     assert.deepEqual(words.map((w) => w.text), ['Model', '5', 'now', 'costs', 'half', 'as', 'much.']);
     assert.ok(words.every((w, i) => w.start < w.end && (i === 0 || w.start === words[i - 1]!.end)));
-    assert.equal(Number(words.at(-1)!.end.toFixed(6)), Number((1.68 + 2).toFixed(6)));
+    assert.equal(Number(words.at(-1)!.end.toFixed(6)), Number((1.58 + 2).toFixed(6)));
   });
 
   test('without a voice, a line lasts as long as it takes to read it', () => {
@@ -185,7 +187,7 @@ describe('studio', () => {
   test('video for video networks, a carousel for Instagram and for image requests, nothing otherwise', () => {
     const db = testDb();
     const draft = (overrides: Record<string, unknown>) => getDraft(db, insertDraft(db, overrides))!;
-    const script = JSON.stringify({ hook: 'h', shots: [{ visual: 'v', voiceover: '', on_screen_text: 't' }], duration_s: 10 });
+    const script = JSON.stringify({ hook: 'h', shots: [{ visual: 'v', voiceover: '', on_screen_text: 't', scene: null }], duration_s: 10 });
     assert.equal(mediaKind(draft({ network: 'tiktok', script })), 'video');
     assert.equal(mediaKind(draft({ network: 'instagram' })), 'images');
     assert.equal(mediaKind(draft({ asset_request: JSON.stringify({ type: 'image', brief: 'b', duration_s: 0 }) })), 'images');
@@ -233,40 +235,107 @@ describe('HyperFrames composition', () => {
     hook: 'Half <the> price?',
     duration_s: 12,
     shots: [
-      { visual: 'Pricing page', voiceover: 'Model 5 now costs half as much.', on_screen_text: '$0.10' },
-      { visual: 'Terminal', voiceover: 'Check the benchmarks first.', on_screen_text: 'Benchmarks first' },
-      { visual: 'Chart', voiceover: 'Then decide.', on_screen_text: 'Decide' },
+      { visual: 'card', voiceover: 'Model 5 now costs half as much.', on_screen_text: 'half', scene: { kind: 'headline' as const, label: 'The Verge', items: ['Model 5 & co cut prices'], from: '', to: '' } },
+      { visual: 'counter', voiceover: 'Ten cents per call.', on_screen_text: '$0.10', scene: { kind: 'stat' as const, label: 'per call', items: [], from: '$0.20', to: '$0.10' } },
+      { visual: 'term', voiceover: 'Check the benchmarks first.', on_screen_text: 'Benchmarks', scene: null },
     ],
   };
   const timeline = buildTimeline(script, ['https://lab.test/a'], [1.2, 1.6, 1.4, 1]);
   const audio = [
     { id: 'voice-0', src: 'assets/voice-0.wav', start: 0, duration: 1.2, volume: 1, track: 3 },
-    { id: 'whoosh-0', src: 'assets/whoosh.wav', start: 1.3, duration: 0.32, volume: 0.35, track: 4 },
+    { id: 'whoosh-0', src: 'assets/whoosh.wav', start: 1.3, duration: 0.32, volume: 0.2, track: 4 },
   ];
   const page = composeShort(timeline, audio, theme);
 
-  test('follows the HyperFrames contract: a root as long as the video, GSAP loaded locally, one registered timeline', () => {
+  test('follows the HyperFrames contract: a root as long as the video, GSAP and grain local, one registered timeline', () => {
     assert.match(page, new RegExp(`data-composition-id="main" data-start="0" data-duration="${Number(timeline.seconds.toFixed(3))}"`));
     assert.match(page, /<script src="assets\/gsap\.min\.js"><\/script>/);
+    assert.match(page, /url\(assets\/grain\.png\)/);
     assert.match(page, /window\.__timelines\["main"\] = tl;/);
-    assert.doesNotMatch(page, /https?:\/\/(?!lab)/);
-  });
-
-  test('one clip per beat, caption groups on their own track, voice and cut sounds on separate tracks', () => {
-    assert.equal(page.match(/class="clip beat"/g)?.length, timeline.beats.length);
-    assert.ok((page.match(/class="clip cap"/g)?.length ?? 0) >= 3);
-    assert.match(page, /<audio id="voice-0" class="clip" src="assets\/voice-0\.wav"[^>]*data-track-index="3">/);
-    assert.match(page, /<audio id="whoosh-0"[^>]*data-track-index="4">/);
+    assert.doesNotMatch(page, /https?:\/\//);
     const ids = [...page.matchAll(/ id="([^"]+)"/g)].map((m) => m[1]);
     assert.equal(new Set(ids).size, ids.length);
   });
 
-  test('text is escaped, numbers roll in letter by letter, the hook is readable on frame 0', () => {
-    assert.match(page, /Half<\/span> <span class="w" id="b0-w1">&lt;the&gt;/);
-    assert.match(page, /id="b1-w0-c0">\$<\/span>/);
-    assert.match(page, /tl\.fromTo\('#b0-w0', \{ color: '#9aa4b2' \}/);
-    assert.doesNotMatch(page, /#b0-w0', \{ opacity: 0/);
-    // Words punch only when said: before that, frame 0 shows them at their size, readable.
-    assert.ok([...page.matchAll(/tl\.fromTo\('#b0-w\d+', \{ scale[^\n]*/g)].every((m) => m[0].includes('immediateRender: false')));
+  test('the voice is the type: chunks rise from masks; the hook is on frame 0 and lights only its longest word', () => {
+    assert.match(page, /id="b0-c0-w0">Half<\/span>/);
+    assert.match(page, /id="b0-c0-w1">&lt;the&gt;<\/span>/);
+    assert.doesNotMatch(page, /tl\.fromTo\('#b0-c0 \.wi'/);
+    assert.match(page, /tl\.fromTo\('#b1-c0 \.wi', \{ yPercent: 108 \}/);
+    assert.match(page, /class="wi hi" id="b0-c0-w2">price\?/);
+    assert.match(page, /class="wi" id="b0-c0-w0">Half/);
+  });
+
+  test('each shot shows its example: a headline card, a counter from the old value, a fallback pattern', () => {
+    assert.match(page, /class="card hl"[^]*Model<\/span> <span class="sw">5<\/span> <span class="sw">&amp;/);
+    assert.match(page, /<div class="st-from"><span>\$0\.20<\/span>/);
+    assert.match(page, /const o = \{ v: 0\.2 \}; tl\.to\(o, \{ v: 0\.1,/);
+    assert.match(page, /id="s3"><div class="pattern"/);
+  });
+
+  test('colour fields invert by a wipe from shot to shot; no flash anywhere', () => {
+    assert.ok((page.match(/tl\.fromTo\('#wash'/g)?.length ?? 0) >= 2);
+    assert.doesNotMatch(page, /flash/i);
+    assert.match(page, /--hi:#FF5A1F;--hi-bg:transparent/i);
+  });
+
+  test('figures are read with their prefix, decimals and suffix', () => {
+    assert.deepEqual(parseFigure('$0.10'), { prefix: '$', value: 0.1, decimals: 2, suffix: '' });
+    assert.deepEqual(parseFigure('2.5x'), { prefix: '', value: 2.5, decimals: 1, suffix: 'x' });
+    assert.deepEqual(parseFigure('1,200 users'), { prefix: '', value: 1200, decimals: 0, suffix: ' users' });
+    assert.equal(parseFigure('Beta'), null);
+  });
+});
+
+describe('music', () => {
+  test('a folder gives its tracks in turn; nothing when empty or missing', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'music-'));
+    assert.equal(pickTrack(dir, 1), undefined);
+    for (const name of ['b.mp3', 'a.wav', 'notes.txt']) writeFileSync(path.join(dir, name), '');
+    assert.equal(path.basename(pickTrack(dir, 0)!), 'a.wav');
+    assert.equal(path.basename(pickTrack(dir, 1)!), 'b.mp3');
+    assert.equal(path.basename(pickTrack(path.join(dir, 'b.mp3'), 7)!), 'b.mp3');
+    assert.equal(pickTrack('', 1), undefined);
+    assert.equal(pickTrack(path.join(dir, 'none'), 1), undefined);
+  });
+
+  test('the drop is the sharpest rise into the loudest passage', () => {
+    const points: Array<{ t: number; m: number; s: number }> = [];
+    for (let i = 0; i <= 600; i++) {
+      const t = i / 10;
+      const loud = t >= 30.4;
+      points.push({ t, m: loud ? -8 : -20, s: loud && t >= 33 ? -9 : t >= 30.4 ? -9 - (33 - t) * 3 : -20 });
+    }
+    assert.ok(Math.abs(dropFromLoudness(points) - 30) < 0.6, String(dropFromLoudness(points)));
+    assert.equal(dropFromLoudness(points.map((p) => ({ ...p, m: -20, s: -20 }))), 0);
+  });
+
+  test('music goes under the voice, ducked and levelled', { skip: !ffmpegAvailable && 'ffmpeg is not installed' }, async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'mix-'));
+    const video = path.join(dir, 'v.mp4');
+    const track = path.join(dir, 'm.wav');
+    execFileSync('ffmpeg', ['-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=320x240:d=3', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=3', '-shortest', '-c:v', 'libx264', '-c:a', 'aac', video]);
+    execFileSync('ffmpeg', ['-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=110:duration=20', track]);
+    await mixWithMusic('ffmpeg', video, track, { seconds: 3, dropAt: 1, output: path.join(dir, 'out.mp4') });
+    const streams = execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', path.join(dir, 'out.mp4')]).toString();
+    assert.match(streams, /video[^]*audio/);
+  });
+});
+
+describe('voice', () => {
+  test('the silence around a line is cut, a short margin kept', () => {
+    const rate = 1000;
+    const samples = new Float32Array(1000);
+    samples.fill(0.5, 300, 600);
+    const trimmed = trimSilence(samples, rate);
+    assert.equal(trimmed.length, 300 + 2 * 40);
+  });
+
+  test('lines are written as 16-bit mono WAV', () => {
+    const wav = wavFile(new Float32Array([0, 1, -1]), 24000);
+    assert.equal(wav.toString('ascii', 0, 4), 'RIFF');
+    assert.equal(wav.readUInt32LE(24), 24000);
+    assert.equal(wav.readInt16LE(46), 32767);
+    assert.equal(wav.length, 44 + 6);
   });
 });

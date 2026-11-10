@@ -32,6 +32,22 @@ const assetSchema = z.strictObject({
   duration_s: z.number().min(0).max(600),
 });
 
+/** The animated example a shot shows: a small piece of interface built from facts of the news. */
+export const SCENE_KINDS = ['headline', 'stat', 'compare', 'terminal', 'chat', 'list', 'quote', 'pattern'] as const;
+
+const sceneSchema = z.strictObject({
+  kind: z.enum(SCENE_KINDS),
+  /** headline: the outlet; stat, compare: what is measured; quote: who said it; list, terminal, chat: a title; pattern: the word repeated. */
+  label: z.string().max(60),
+  /** headline: the headline; list: 2 to 4 items; terminal: 1 to 3 commands or output lines; chat: question then answer; quote: the quote. */
+  items: z.array(z.string().max(120)).max(4),
+  /** stat: the value (from may be empty); compare: before and after. */
+  from: z.string().max(24),
+  to: z.string().max(24),
+});
+
+export type Scene = z.infer<typeof sceneSchema>;
+
 const scriptSchema = z.strictObject({
   hook: z.string().min(1).max(300),
   shots: z
@@ -40,6 +56,7 @@ const scriptSchema = z.strictObject({
         visual: z.string().min(1).max(400),
         voiceover: z.string().max(600),
         on_screen_text: z.string().max(200),
+        scene: sceneSchema.nullable(),
       }),
     )
     .min(1)
@@ -276,7 +293,15 @@ export type DraftContent = { text: string; title: string | null; script: VideoSc
 
 function scriptStrings(script: VideoScript | null): string[] {
   if (!script) return [];
-  return [script.hook, ...script.shots.flatMap((s) => [s.visual, s.voiceover, s.on_screen_text])];
+  return [
+    script.hook,
+    ...script.shots.flatMap((s) => [
+      s.visual,
+      s.voiceover,
+      s.on_screen_text,
+      ...(s.scene ? [s.scene.label, ...s.scene.items, s.scene.from, s.scene.to] : []),
+    ]),
+  ];
 }
 
 /**

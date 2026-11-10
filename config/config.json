@@ -167,17 +167,17 @@
     "askBeforeVideo": true,
     "keepDays": 7,
     "theme": {
-      "background": "#0b0d12",
-      "text": "#ffffff",
-      "muted": "#9aa4b2",
-      "accent": "#7c5cff"
+      "background": "#0E0E10",
+      "text": "#F6F3EE",
+      "muted": "#8C8780",
+      "accent": "#FF5A1F"
     },
     "voice": {
       "enabled": true,
       "name": "af_heart",
       "speed": 1.1
     },
-    "music": ""
+    "music": "data/music"
   },
   "paths": {
     "database": "data/social-copilot.sqlite",

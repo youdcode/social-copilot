@@ -54,6 +54,7 @@ const VIDEO_RULES = [
   `${MAX_SPOKEN_WORDS} spoken words at most in total, in short punchy sentences: nobody reads or listens to more.`,
   'The hook is spoken and on screen in the first 2 seconds: a bold claim, a number, or a question.',
   `${MIN_SHOTS + 1} to ${MAX_SHOTS} shots, each a new beat every 3 to 5 seconds. voiceover: one short sentence. on_screen_text: 1 to ${MAX_SCREEN_WORDS} words, the key word or number of that sentence, never the sentence itself. visual: what the motion design shows, in a few words.`,
+  'scene: the animated example each shot shows, built only from facts of the sources, never invented: "headline" (label: the outlet, items: [the headline]), "stat" (label: what is measured, to: the number, from: the old number or empty), "compare" (label: what is compared, from: before, to: after), "terminal" (label: a title, items: 1 to 3 short commands or output lines), "chat" (label: a title, items: [a question, its answer]), "list" (label: a title, items: 2 to 4 short items), "quote" (label: who reacted, items: [a short quote from the reactions]), "pattern" (label: one word, repeated as a moving pattern for emphasis). Vary the kinds; null only when nothing fits.',
   'worth_a_video: false when the news has nothing punchy enough for a short video; no video is made that day, and that is fine.',
 ];
 /** Characters of a whole video script (hook and shots): what fits in a short video, and in a Telegram message. */
