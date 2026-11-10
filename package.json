@@ -30,6 +30,8 @@
     "better-sqlite3": "13.0.3",
     "fast-xml-parser": "5.11.1",
     "grammy": "1.46.0",
+    "gsap": "3.15.1",
+    "hyperframes": "0.9.30",
     "kokoro-js": "1.2.1",
     "node-cron": "4.6.0",
     "satori": "0.63.2",
@@ -43,6 +45,7 @@
     "typescript": "7.0.2"
   },
   "overrides": {
-    "fflate": "0.8.3"
+    "fflate": "0.8.3",
+    "undici": "7.30.2"
   }
 }

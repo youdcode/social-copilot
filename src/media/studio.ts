@@ -1,11 +1,12 @@
-import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { AssistantDeps } from '../assistant.ts';
 import type { Draft } from '../drafts.ts';
 import { NETWORK_SPECS } from '../networks.ts';
 import { designCarousel, renderCarousel } from './carousel.ts';
-import { buildTimeline, estimateSeconds, mixAudio, renderVideo, spokenLines } from './video.ts';
-import { speakLines } from './voice.ts';
+import { composeShort, gsapPath, renderProject, type AudioClip } from './hyperframes.ts';
+import { buildTimeline, estimateSeconds, makeWhoosh, mixAudio, normalizeLoudness, renderVideo, spokenLines, type Timeline } from './video.ts';
+import { speakLines, type VoiceLine } from './voice.ts';
 
 export type MediaResult = { kind: 'images'; files: string[] } | { kind: 'video'; file: string; seconds: number };
 
@@ -40,20 +41,32 @@ export async function produceMedia(deps: AssistantDeps, draft: Draft, outDir: st
   if (kind === 'video') {
     const started = Date.now();
     const lines = spokenLines(draft.script!);
+    // The project folder is kept: index.html opens in HyperFrames Studio to tweak a video by hand.
+    const project = path.join(outDir, 'project');
+    const assets = path.join(project, 'assets');
+    mkdirSync(assets, { recursive: true });
     // The voice sets the pace: each beat lasts as long as its line is said.
-    const voices = media.voice.enabled
-      ? await speakLines(lines, outDir, { voice: media.voice.name, speed: media.voice.speed })
-      : [];
+    const voices = media.voice.enabled ? await speakLines(lines, assets, { voice: media.voice.name, speed: media.voice.speed }) : [];
     const timeline = buildTimeline(draft.script!, sources, voices.length > 0 ? voices.map((v) => v.seconds) : lines.map(estimateSeconds));
     const file = path.join(outDir, `${draft.network}-${draft.id}.mp4`);
-    const silent = voices.length > 0 || media.music ? path.join(outDir, 'picture.mp4') : file;
-    await renderVideo(timeline, silent, media);
-    if (silent !== file) {
-      await mixAudio(timeline, voices.map((v) => v.file), silent, file, { ffmpeg: media.ffmpeg, ...(media.music ? { music: media.music } : {}) });
-      rmSync(silent, { force: true });
-      for (const voice of voices) rmSync(voice.file, { force: true });
+    let engine = media.engine;
+    if (engine === 'hyperframes') {
+      try {
+        await hyperframesVideo(timeline, voices, project, file, media);
+      } catch (error) {
+        deps.log(`HyperFrames failed, drawing the video with the basic engine: ${(error as Error).message}`);
+        engine = 'basic';
+      }
     }
-    deps.log(`Video of draft #${draft.id}: ${timeline.seconds.toFixed(1)} s, made in ${((Date.now() - started) / 1000).toFixed(1)} s.`);
+    if (engine === 'basic') {
+      const silent = voices.length > 0 || media.music ? path.join(outDir, 'picture.mp4') : file;
+      await renderVideo(timeline, silent, media);
+      if (silent !== file) {
+        await mixAudio(timeline, voices.map((v) => v.file), silent, file, { ffmpeg: media.ffmpeg, ...(media.music ? { music: media.music } : {}) });
+        rmSync(silent, { force: true });
+      }
+    }
+    deps.log(`Video of draft #${draft.id} (${engine}): ${timeline.seconds.toFixed(1)} s, made in ${((Date.now() - started) / 1000).toFixed(1)} s.`);
     return { kind, file, seconds: timeline.seconds };
   }
 
@@ -66,6 +79,37 @@ export async function produceMedia(deps: AssistantDeps, draft: Draft, outDir: st
     return file;
   });
   return { kind, files };
+}
+
+/**
+ * A video through HyperFrames: the composition, its voice lines, a whoosh on every cut and the music if any, rendered
+ * in Chrome, then levelled to -14 LUFS.
+ */
+async function hyperframesVideo(
+  timeline: Timeline,
+  voices: readonly VoiceLine[],
+  project: string,
+  file: string,
+  media: AssistantDeps['config']['media'],
+): Promise<void> {
+  const assets = path.join(project, 'assets');
+  copyFileSync(gsapPath(), path.join(assets, 'gsap.min.js'));
+  await makeWhoosh(media.ffmpeg, path.join(assets, 'whoosh.wav'));
+  const spoken = timeline.beats.filter((b) => b.kind !== 'outro');
+  const audio: AudioClip[] = [
+    ...voices.map((v, i) => ({ id: `voice-${i}`, src: `assets/${path.basename(v.file)}`, start: spoken[i]!.start, duration: v.seconds, volume: 1, track: 3 })),
+    ...timeline.beats.slice(1).map((b, i) => ({ id: `whoosh-${i}`, src: 'assets/whoosh.wav', start: Math.max(0, b.start - 0.08), duration: 0.32, volume: 0.35, track: 4 })),
+  ];
+  if (media.music) {
+    const music = `music${path.extname(media.music)}`;
+    copyFileSync(media.music, path.join(assets, music));
+    audio.push({ id: 'music', src: `assets/${music}`, start: 0, duration: timeline.seconds, volume: 0.15, track: 5 });
+  }
+  writeFileSync(path.join(project, 'index.html'), composeShort(timeline, audio, media.theme));
+  const raw = path.join(path.dirname(file), 'raw.mp4');
+  await renderProject(project, raw);
+  await normalizeLoudness(media.ffmpeg, raw, file);
+  rmSync(raw, { force: true });
 }
 
 /** Deletes media folders older than keepDays. Returns how many went. */

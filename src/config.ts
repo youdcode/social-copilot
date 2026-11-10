@@ -108,6 +108,8 @@ const configSchema = z.strictObject({
     /** ffmpeg assembles the videos: a command on the PATH, or a full path. */
     ffmpeg: z.string().min(1),
     fps: z.number().int().min(12).max(60),
+    /** hyperframes: GSAP compositions rendered in Chrome (motion blur, richer motion); basic: drawn frames, no browser. */
+    engine: z.enum(['hyperframes', 'basic']),
     keepDays: z.number().positive(),
     theme: z.strictObject({ background: color, text: color, muted: color, accent: color }),
     /** The English voiceover of videos: a Kokoro voice, run on this computer. */

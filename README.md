@@ -48,7 +48,9 @@ Made on your computer, free, and sent as a reply to the draft card:
   - captions 2 or 3 words at a time, the word being said lit up, shown a moment ahead for muted viewers;
   - frame 0 shows the hook, so it works as the thumbnail; everything stays out of the areas the apps cover;
   - sound levelled to -14 LUFS; add your own music with `media.music` (mind its license);
-  - frames are drawn on several cores: a 20 s video takes about 20 s.
+  - rendered by [HyperFrames](https://github.com/heygen-com/hyperframes) (Apache 2.0): each video is an HTML page animated with [GSAP](https://gsap.com) (free "Standard no charge" license), rendered frame by frame in a headless Chrome with motion blur. A 16 s video renders in about 13 s. The service turns HyperFrames' usage telemetry off;
+  - each video's project folder is kept next to it (`data/media/<id>/project`): open it in HyperFrames Studio to tweak one by hand;
+  - `media.engine: "basic"` draws videos without a browser instead (plainer, no Chrome needed); it also takes over if HyperFrames fails.
 - **What works this week**: once a week, Mistral studies what makes short tech videos perform right now (hooks, length, pace, captions, voice) with a web search, and the video scripts follow that brief. `/trends` shows it. About €0.07 a week.
 
 Colors, frame rate, the voice (`media.voice`), music and how long files are kept (`keepDays`, 7 by default) are in the `media` section of `config/config.json`. Set `media.enabled` to `false` to turn visuals off. Text and fonts are rendered with [satori](https://github.com/vercel/satori) and [resvg](https://github.com/yisibl/resvg-js), in the Inter typeface (SIL Open Font License).

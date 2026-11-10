@@ -325,6 +325,26 @@ export async function renderVideo(
   return { seconds: frames / fps, frames };
 }
 
+/** Brings a finished video's sound to -14 LUFS, the level TikTok and YouTube play at, without touching the picture. */
+export async function normalizeLoudness(ffmpeg: string, input: string, output: string): Promise<void> {
+  const run = runFfmpeg(ffmpeg, [
+    '-i', input, '-map', '0:v', '-map', '0:a', '-c:v', 'copy',
+    '-af', 'loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', output,
+  ]);
+  run.stdin.end();
+  await run.done;
+}
+
+/** A short whoosh for cuts, made with ffmpeg's noise generator: no sound file to ship or license. */
+export async function makeWhoosh(ffmpeg: string, output: string): Promise<void> {
+  const run = runFfmpeg(ffmpeg, [
+    '-f', 'lavfi', '-i', 'anoisesrc=d=0.32:c=pink:a=0.6:r=48000',
+    '-af', 'highpass=f=900,lowpass=f=7000,afade=t=in:d=0.05,afade=t=out:st=0.08:d=0.24', output,
+  ]);
+  run.stdin.end();
+  await run.done;
+}
+
 /**
  * Lays the voice lines at their beats, a short whoosh on every cut and, if given, music underneath, levelled to
  * -14 LUFS (what TikTok and YouTube play at), then muxes the sound with the picture.

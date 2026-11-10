@@ -13,6 +13,7 @@ import { mediaKind, purgeOldMedia } from '../src/media/studio.ts';
 import { buildTimeline, captionGroups, estimateSeconds, frameAt, mixAudio, renderVideo, timeWords } from '../src/media/video.ts';
 import { latestVideoTrends, studyVideoTrends } from '../src/generation/trends.ts';
 import { systemPrompt } from '../src/generation/draft.ts';
+import { composeShort } from '../src/media/hyperframes.ts';
 import { createSerialQueue } from '../src/queue.ts';
 import { createMediaDelivery } from '../src/telegram/media.ts';
 import { insertDraft, scriptedGateway, testConfig, testDb, testFilter } from './helpers.ts';
@@ -224,5 +225,46 @@ describe('delivery', () => {
     assert.equal(group.payload.media[0].type, 'document');
     assert.equal(group.payload.reply_parameters.message_id, 7);
     assert.ok(getDraft(d.db, id)!.assetReadyAt);
+  });
+});
+
+describe('HyperFrames composition', () => {
+  const script = {
+    hook: 'Half <the> price?',
+    duration_s: 12,
+    shots: [
+      { visual: 'Pricing page', voiceover: 'Model 5 now costs half as much.', on_screen_text: '$0.10' },
+      { visual: 'Terminal', voiceover: 'Check the benchmarks first.', on_screen_text: 'Benchmarks first' },
+      { visual: 'Chart', voiceover: 'Then decide.', on_screen_text: 'Decide' },
+    ],
+  };
+  const timeline = buildTimeline(script, ['https://lab.test/a'], [1.2, 1.6, 1.4, 1]);
+  const audio = [
+    { id: 'voice-0', src: 'assets/voice-0.wav', start: 0, duration: 1.2, volume: 1, track: 3 },
+    { id: 'whoosh-0', src: 'assets/whoosh.wav', start: 1.3, duration: 0.32, volume: 0.35, track: 4 },
+  ];
+  const page = composeShort(timeline, audio, theme);
+
+  test('follows the HyperFrames contract: a root as long as the video, GSAP loaded locally, one registered timeline', () => {
+    assert.match(page, new RegExp(`data-composition-id="main" data-start="0" data-duration="${Number(timeline.seconds.toFixed(3))}"`));
+    assert.match(page, /<script src="assets\/gsap\.min\.js"><\/script>/);
+    assert.match(page, /window\.__timelines\["main"\] = tl;/);
+    assert.doesNotMatch(page, /https?:\/\/(?!lab)/);
+  });
+
+  test('one clip per beat, caption groups on their own track, voice and cut sounds on separate tracks', () => {
+    assert.equal(page.match(/class="clip beat"/g)?.length, timeline.beats.length);
+    assert.ok((page.match(/class="clip cap"/g)?.length ?? 0) >= 3);
+    assert.match(page, /<audio id="voice-0" class="clip" src="assets\/voice-0\.wav"[^>]*data-track-index="3">/);
+    assert.match(page, /<audio id="whoosh-0"[^>]*data-track-index="4">/);
+    const ids = [...page.matchAll(/ id="([^"]+)"/g)].map((m) => m[1]);
+    assert.equal(new Set(ids).size, ids.length);
+  });
+
+  test('text is escaped, numbers roll in letter by letter, the hook is readable on frame 0', () => {
+    assert.match(page, /Half<\/span> <span class="w" id="b0-w1">&lt;the&gt;/);
+    assert.match(page, /id="b1-w0-c0">\$<\/span>/);
+    assert.match(page, /tl\.fromTo\('#b0-w0', \{ color: '#9aa4b2' \}/);
+    assert.doesNotMatch(page, /#b0-w0', \{ opacity: 0/);
   });
 });
